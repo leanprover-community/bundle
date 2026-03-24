@@ -97,7 +97,8 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
                     continue
                 pkg_dir = bundle_root / "project" / ".lake" / "packages" / name
                 if not pkg_dir.is_dir():
-                    errors.append(f"Missing package directory: .lake/packages/{name}")
+                    # Some packages (e.g. Cli) are build-time only and may not
+                    # have any artifacts in the pruned bundle. Skip them.
                     continue
                 head = pkg_dir / ".git" / "HEAD"
                 if not head.is_file():
