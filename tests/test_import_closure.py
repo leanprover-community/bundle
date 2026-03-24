@@ -166,3 +166,5 @@ class TestModuleToOleanPaths:
         paths = module_to_olean_paths("Mathlib.Algebra.Group.Basic")
         assert "Mathlib/Algebra/Group/Basic.olean" in paths
         assert "Mathlib/Algebra/Group/Basic.ilean" in paths
+        assert "Mathlib/Algebra/Group/Basic.olean.private" in paths
+        assert "Mathlib/Algebra/Group/Basic.trace" in paths

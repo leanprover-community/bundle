@@ -143,9 +143,19 @@ def module_to_olean_paths(mod: str) -> list[str]:
     These are relative to a build lib directory.
     E.g. for "Mathlib.Algebra.Group.Basic", returns paths like
     "Mathlib/Algebra/Group/Basic.olean", etc.
+
+    Lean 4 needs .olean, .ilean, .olean.private, .olean.server,
+    and .trace files to fully load a module.
     """
     base = str(Path(*mod.split(".")))
     return [
         base + ".olean",
+        base + ".olean.private",
+        base + ".olean.server",
+        base + ".olean.hash",
+        base + ".olean.private.hash",
+        base + ".olean.server.hash",
         base + ".ilean",
+        base + ".ilean.hash",
+        base + ".trace",
     ]
