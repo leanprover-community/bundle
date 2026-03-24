@@ -225,15 +225,23 @@ def trim_lean_toolchain(lean_dir: Path, platform: str) -> None:
     bin_dir = lean_dir / "bin"
     lib_dir = lean_dir / "lib"
 
-    # Binaries to keep
-    keep_bins = {"lean", "lake"}
-    if is_windows:
-        keep_bins = {b + ".exe" for b in keep_bins}
+    # On Windows, DLLs are in bin/ alongside executables.
+    # We must keep lean.exe, lake.exe, and all required DLLs.
+    remove_bin_patterns = [
+        "cadical", "clang", "leanc", "leanmake",
+        "ld.lld", "lld", "llvm-ar",
+        # DLLs we don't need
+        "libllvm", "libclang", "liblld",
+    ]
 
-    # Remove unwanted binaries
     if bin_dir.is_dir():
         for f in list(bin_dir.iterdir()):
-            if f.name not in keep_bins and f.is_file():
+            if not f.is_file():
+                continue
+            name = f.name.lower()
+            stem = f.stem.lower()
+            if any(stem == p or stem.startswith(p + ".") or name.startswith(p)
+                   for p in remove_bin_patterns):
                 f.unlink()
 
     # Remove unwanted lib directories and files
