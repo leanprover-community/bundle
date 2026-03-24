@@ -272,17 +272,22 @@ def assemble_bundle(
     module_to_pkg: dict[str, str] = {}
     packages_dir = project_dir / ".lake" / "packages"
 
-    def _first_root(path: Path) -> Path | None:
+    def _best_root(path: Path) -> Path | None:
+        best: Path | None = None
+        best_len = -1
         for root in source_roots:
             try:
                 path.relative_to(root)
-                return root
             except ValueError:
                 continue
-        return None
+            root_len = len(root.parts)
+            if root_len > best_len:
+                best = root
+                best_len = root_len
+        return best
 
     for src in dep_sources:
-        root = _first_root(src)
+        root = _best_root(src)
         if not root:
             continue
         try:

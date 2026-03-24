@@ -151,38 +151,36 @@ def build_search_paths(
     return paths
 
 
-def _parse_env_lines(lines: list[str]) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for line in lines:
-        line = line.strip()
-        if not line or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[len("export "):]
-        key, value = line.split("=", 1)
-        env[key] = value
-    return env
+def get_lean_src_paths(project_dir: Path) -> list[Path]:
+    """Return LEAN_SRC_PATH entries in Lake's environment (ordered).
 
-
-def get_lake_env(project_dir: Path) -> dict[str, str]:
-    """Return the environment as printed by `lake env` in project_dir."""
+    Uses `lake env python -c ...` to avoid shell-specific output formats.
+    """
     result = subprocess.run(
-        ["lake", "env"],
+        [
+            "lake",
+            "env",
+            "python",
+            "-c",
+            "import os; print(os.environ.get('LEAN_SRC_PATH',''))",
+        ],
         cwd=project_dir,
         capture_output=True,
         text=True,
         check=True,
     )
-    return _parse_env_lines(result.stdout.splitlines())
-
-
-def get_lean_src_paths(project_dir: Path) -> list[Path]:
-    """Return LEAN_SRC_PATH entries in Lake's environment (ordered)."""
-    env = get_lake_env(project_dir)
-    raw = env.get("LEAN_SRC_PATH", "")
+    raw = result.stdout.strip()
     if not raw:
         return []
-    return [Path(p) for p in raw.split(os.pathsep) if p]
+    paths: list[Path] = []
+    for entry in raw.split(os.pathsep):
+        if not entry:
+            continue
+        p = Path(entry)
+        if not p.is_absolute():
+            p = (project_dir / p).resolve()
+        paths.append(p)
+    return paths
 
 
 def compute_src_deps(project_dir: Path) -> set[Path]:
