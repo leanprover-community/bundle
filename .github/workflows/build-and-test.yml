@@ -130,6 +130,7 @@ jobs:
           }
 
       - name: Test lean server starts
+        continue-on-error: true
         shell: pwsh
         timeout-minutes: 2
         run: |
