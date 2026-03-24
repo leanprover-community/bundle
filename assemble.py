@@ -101,27 +101,39 @@ def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
     return count
 
 
-def create_git_stubs(
-    bundle_packages_dir: Path,
-    manifest: dict,
+def rewrite_manifest_to_path_deps(
+    bundle_project: Path,
 ) -> None:
-    """Create minimal .git stubs so lake serve can read HEAD revisions.
+    """Rewrite lake-manifest.json to use local path deps instead of git deps.
 
-    Args:
-        bundle_packages_dir: The .lake/packages/ directory in the bundle.
-        manifest: Parsed lake-manifest.json content.
+    Lake's materializeDeps always runs git commands for git-type deps, even
+    with --no-build. By rewriting the manifest to use path deps pointing at
+    the local .lake/packages/ dirs, lake skips all git operations. This is
+    a workaround until Lake supports an --offline flag
+    (https://github.com/leanprover/lean4/issues/13101).
+
+    Lake's validateManifest only warns on source-kind mismatch, so this works.
     """
+    manifest_path = bundle_project / "lake-manifest.json"
+    if not manifest_path.is_file():
+        return
+
+    manifest = json.loads(manifest_path.read_text())
+    packages_dir = bundle_project / ".lake" / "packages"
+
     for pkg in manifest.get("packages", []):
-        pkg_name = pkg["name"]
-        rev = pkg.get("rev")
-        if not rev:
-            continue
-        pkg_dir = bundle_packages_dir / pkg_name
-        if not pkg_dir.is_dir():
-            continue
-        git_dir = pkg_dir / ".git"
-        git_dir.mkdir(exist_ok=True)
-        (git_dir / "HEAD").write_text(rev + "\n")
+        if pkg.get("type") == "git":
+            pkg_name = pkg["name"]
+            pkg_dir = packages_dir / pkg_name
+            if pkg_dir.is_dir():
+                # Convert from git to path dep
+                pkg["type"] = "path"
+                pkg["dir"] = f".lake/packages/{pkg_name}"
+                # Remove git-specific fields
+                for key in ["url", "rev", "inputRev", "subDir"]:
+                    pkg.pop(key, None)
+
+    manifest_path.write_text(json.dumps(manifest, indent=1) + "\n")
 
 
 def setup_vscodium_portable(
@@ -223,11 +235,8 @@ def assemble_bundle(
     print(f"  {n_oleans} olean files copied")
     print(f"  {n_sources} source files copied")
 
-    print("Creating git stubs...")
-    manifest_path = project_dir / "lake-manifest.json"
-    if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
-        create_git_stubs(bundle_packages, manifest)
+    print("Rewriting manifest to path deps...")
+    rewrite_manifest_to_path_deps(bundle_project)
 
     print("Installing launcher...")
     if platform.startswith("windows"):

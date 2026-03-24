@@ -202,13 +202,21 @@ def download_lean4_extension(dest_dir: Path, version: str | None = None) -> Path
         url = f"https://open-vsx.org/api/leanprover/lean4/{version}/file/leanprover.lean4-{version}.vsix"
         _download(url, vsix_path)
 
-    # A VSIX is just a zip file
+    # A VSIX is a zip with an extension/ subdirectory containing the actual
+    # extension files. VS Code expects package.json at the extension root,
+    # so we extract extension/* to the root, discarding the VSIX metadata.
     ext_dir = dest_dir / f"leanprover.lean4-{version}"
     ext_dir.mkdir(exist_ok=True)
 
     print(f"  Extracting lean4 extension...")
     with zipfile.ZipFile(vsix_path) as zf:
-        zf.extractall(ext_dir)
+        prefix = "extension/"
+        for info in zf.infolist():
+            if info.filename.startswith(prefix):
+                # Strip the extension/ prefix
+                info.filename = info.filename[len(prefix):]
+                if info.filename:  # skip the empty directory entry
+                    zf.extract(info, ext_dir)
 
     vsix_path.unlink()
 

@@ -85,31 +85,20 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
             if not (bundle_root / "lean" / "bin" / dll).is_file():
                 errors.append(f"Missing DLL: lean/bin/{dll}")
 
-    # --- Git stubs ---
+    # --- Manifest uses path deps (not git) ---
     manifest_path = bundle_root / "project" / "lake-manifest.json"
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text())
-            for pkg in manifest.get("packages", []):
-                name = pkg["name"]
-                rev = pkg.get("rev")
-                if not rev:
-                    continue
-                pkg_dir = bundle_root / "project" / ".lake" / "packages" / name
-                if not pkg_dir.is_dir():
-                    # Some packages (e.g. Cli) are build-time only and may not
-                    # have any artifacts in the pruned bundle. Skip them.
-                    continue
-                head = pkg_dir / ".git" / "HEAD"
-                if not head.is_file():
-                    errors.append(f"Missing git stub: .lake/packages/{name}/.git/HEAD")
-                else:
-                    actual_rev = head.read_text().strip()
-                    if actual_rev != rev:
-                        errors.append(
-                            f"Git stub mismatch for {name}: "
-                            f"expected {rev[:12]}, got {actual_rev[:12]}"
-                        )
+            git_deps = [
+                pkg["name"]
+                for pkg in manifest.get("packages", [])
+                if pkg.get("type") == "git"
+            ]
+            if git_deps:
+                errors.append(
+                    f"Manifest still has git deps (should be path): {', '.join(git_deps)}"
+                )
         except json.JSONDecodeError as e:
             errors.append(f"lake-manifest.json: invalid JSON: {e}")
 

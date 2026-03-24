@@ -119,13 +119,8 @@ jobs:
           echo "LEAN_PATH=$leanPath" >> $env:GITHUB_OUTPUT
 
       # --- Tier 2: lake build --no-build ---
-      # Note: lake tries to resolve git dependencies even with --no-build.
-      # Our minimal git stubs don't have remote URLs, so this fails.
-      # This is a known issue — the bundle works via lean --server (which
-      # the VS Code extension uses) but not via lake directly.
-      # TODO: improve git stubs to satisfy lake's dependency resolution.
+      # Manifest is rewritten to path deps so lake doesn't need git.
       - name: "Tier 2: lake build --no-build"
-        continue-on-error: true
         shell: pwsh
         run: |
           $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
@@ -158,9 +153,12 @@ jobs:
           }
 
       # --- Tier 4: VSCodium CLI verification ---
+      # Note: --list-extensions may not recognize manually-placed extensions
+      # (VS Code uses a profile/registry layer). The structural check in
+      # verify_bundle.py already confirms the extension files exist.
       - name: "Tier 4: VSCodium extensions check"
         shell: pwsh
-        continue-on-error: true
+        continue-on-error: true  # CLI may not list manually-installed extensions
         run: |
           $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           $codium = "$root\vscodium\VSCodium.exe"
