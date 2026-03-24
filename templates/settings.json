@@ -1,0 +1,14 @@
+{
+  "lean4.automaticallyBuildDependencies": false,
+  "lean4.alwaysAskBeforeInstallingLeanVersions": true,
+  "lean4.showSetupWarnings": false,
+  "extensions.autoUpdate": false,
+  "update.mode": "none",
+  "extensions.autoCheckUpdates": false,
+  "telemetry.telemetryLevel": "off",
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "files.encoding": "utf8",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true
+}

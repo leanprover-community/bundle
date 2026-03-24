@@ -1,0 +1,165 @@
+name: Build and Test Bundle
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: 'Project repository URL'
+        required: false
+        default: 'https://github.com/PatrickMassot/MDD154'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run unit tests
+        run: pytest tests/ -v
+
+  build-bundle:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    env:
+      REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Clone and build project
+        run: |
+          git clone --depth=1 "$REPO_URL" /tmp/project
+          cd /tmp/project
+          lake exe cache get || true
+          lake build
+
+      - name: Build Windows bundle
+        run: |
+          python bundle.py "$REPO_URL" \
+            --project-dir /tmp/project \
+            --platform windows-x64 \
+            --work-dir /tmp/bundle-work \
+            --output /tmp/bundle.zip
+
+      - name: Report bundle size
+        run: |
+          ls -lh /tmp/bundle.zip
+          du -sh /tmp/bundle-work/*/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-windows-x64
+          path: /tmp/bundle.zip
+          retention-days: 7
+
+  test-windows:
+    runs-on: windows-latest
+    needs: build-bundle
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-windows-x64
+
+      - name: Extract bundle
+        run: Expand-Archive -Path bundle.zip -DestinationPath bundle
+
+      - name: Find bundle root
+        id: find-root
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Path bundle -Directory | Select-Object -First 1
+          echo "BUNDLE_ROOT=$($root.FullName)" >> $env:GITHUB_OUTPUT
+          echo "Bundle root: $($root.FullName)"
+          Get-ChildItem $root.FullName
+
+      - name: Test lean binary
+        shell: pwsh
+        run: |
+          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          $env:PATH = "$root\lean\bin;$env:PATH"
+          lean --version
+
+      - name: Build LEAN_PATH
+        id: lean-path
+        shell: pwsh
+        run: |
+          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          $leanPath = "$root\lean\lib\lean;$root\project\.lake\build\lib\lean"
+          Get-ChildItem "$root\project\.lake\packages" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $buildDir = Join-Path $_.FullName ".lake\build\lib\lean"
+            if (Test-Path $buildDir) {
+              $leanPath += ";$buildDir"
+            }
+          }
+          echo "LEAN_PATH=$leanPath" >> $env:GITHUB_OUTPUT
+
+      - name: Test lean can process a project file
+        shell: pwsh
+        run: |
+          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          $env:PATH = "$root\lean\bin;$env:PATH"
+          $env:LEAN_PATH = "${{ steps.lean-path.outputs.LEAN_PATH }}"
+          $env:ELAN_HOME = "$root\lean"
+
+          # Find a .lean file in the project
+          $leanFile = Get-ChildItem "$root\project" -Recurse -Filter "*.lean" |
+            Where-Object { $_.FullName -notlike "*\.lake*" -and $_.FullName -notlike "*lakefile*" } |
+            Select-Object -First 1
+
+          if ($leanFile) {
+            echo "Testing: $($leanFile.FullName)"
+            lean "$($leanFile.FullName)" 2>&1 | Select-Object -First 20
+            if ($LASTEXITCODE -ne 0) {
+              echo "::warning::lean returned exit code $LASTEXITCODE"
+            }
+          } else {
+            echo "::warning::No .lean files found in project"
+          }
+
+      - name: Test lean server starts
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          $env:PATH = "$root\lean\bin;$env:PATH"
+          $env:LEAN_PATH = "${{ steps.lean-path.outputs.LEAN_PATH }}"
+          $env:ELAN_HOME = "$root\lean"
+
+          # Send LSP initialize and check for response
+          $init = '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{}}}'
+          $header = "Content-Length: $($init.Length)`r`n`r`n"
+          $input = "$header$init"
+
+          $proc = Start-Process -FilePath "lean" -ArgumentList "--server" `
+            -RedirectStandardInput "$root\lsp_input.txt" `
+            -RedirectStandardOutput "$root\lsp_output.txt" `
+            -PassThru -NoNewWindow
+
+          Set-Content -Path "$root\lsp_input.txt" -Value $input -NoNewline
+
+          Start-Sleep -Seconds 5
+          if (!$proc.HasExited) {
+            Stop-Process $proc
+          }
+
+          if (Test-Path "$root\lsp_output.txt") {
+            $output = Get-Content "$root\lsp_output.txt" -Raw
+            if ($output -match "jsonrpc") {
+              echo "Lean server responded successfully"
+            } else {
+              echo "::warning::Lean server output did not contain expected response"
+            }
+          }

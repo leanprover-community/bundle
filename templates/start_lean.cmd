@@ -1,0 +1,23 @@
+@echo off
+setlocal EnableDelayedExpansion
+
+:: Set the bundle root directory (where this script lives)
+set BUNDLE_ROOT=%~dp0
+set BUNDLE_ROOT=%BUNDLE_ROOT:~0,-1%
+
+:: Add lean to PATH
+set PATH=%BUNDLE_ROOT%\lean\bin;%PATH%
+
+:: Prevent elan from interfering
+set ELAN_HOME=%BUNDLE_ROOT%\lean
+
+:: Build LEAN_PATH from all package build directories
+set LEAN_PATH=%BUNDLE_ROOT%\lean\lib\lean;%BUNDLE_ROOT%\project\.lake\build\lib\lean
+for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
+    if exist "%%P\.lake\build\lib\lean" (
+        set LEAN_PATH=!LEAN_PATH!;%%P\.lake\build\lib\lean
+    )
+)
+
+:: Launch VSCodium with the project folder
+start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project"
