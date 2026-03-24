@@ -1,10 +1,13 @@
 """Compute the transitive import closure for a Lean 4 project.
 
-Given a project directory and the search paths for its dependencies,
-determine exactly which modules are transitively imported.
+Prefer Lean's own dependency discovery via `lean --src-deps` to avoid
+fragile Python parsing. Fallback helpers for parsing imports are kept
+for tests and legacy behavior.
 """
 
 import re
+import subprocess
+import os
 from collections import deque
 from pathlib import Path
 
@@ -16,8 +19,7 @@ from pathlib import Path
 #   public meta import Foo.Bar
 #   @[...] import Foo.Bar
 _IMPORT_RE = re.compile(
-    r"^\s*(?:@\[.*?\]\s*)?(?:public\s+)?(?:meta\s+)?import\s+(\S+)",
-    re.MULTILINE,
+    r"^\s*(?:@\[.*?\]\s*)?(?:public\s+)?(?:meta\s+)?import\s+(\S+)\s*$"
 )
 
 
@@ -33,10 +35,15 @@ def parse_imports(path: Path) -> list[str]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    modules = []
-    for match in _IMPORT_RE.finditer(content):
+    modules: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        match = _IMPORT_RE.match(line)
+        if not match:
+            break
         mod = match.group(1)
-        # Sanity check: module names contain only alphanumeric, dots, underscores
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", mod):
             modules.append(mod)
     return modules
@@ -142,6 +149,72 @@ def build_search_paths(
         paths.append(toolchain_lib)
 
     return paths
+
+
+def _parse_env_lines(lines: list[str]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, value = line.split("=", 1)
+        env[key] = value
+    return env
+
+
+def get_lake_env(project_dir: Path) -> dict[str, str]:
+    """Return the environment as printed by `lake env` in project_dir."""
+    result = subprocess.run(
+        ["lake", "env"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return _parse_env_lines(result.stdout.splitlines())
+
+
+def get_lean_src_paths(project_dir: Path) -> list[Path]:
+    """Return LEAN_SRC_PATH entries in Lake's environment (ordered)."""
+    env = get_lake_env(project_dir)
+    raw = env.get("LEAN_SRC_PATH", "")
+    if not raw:
+        return []
+    return [Path(p) for p in raw.split(os.pathsep) if p]
+
+
+def compute_src_deps(project_dir: Path) -> set[Path]:
+    """Compute transitive source dependencies using `lean --src-deps`.
+
+    Returns a set of absolute Paths to .lean files.
+    """
+    deps: set[Path] = set()
+    for lean_file in sorted(project_dir.rglob("*.lean")):
+        if ".lake" in lean_file.parts:
+            continue
+        result = subprocess.run(
+            ["lake", "env", "lean", "--src-deps", str(lean_file)],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise RuntimeError(
+                "lean --src-deps failed. Ensure the project toolchain is Lean 4.17+ "
+                f"and lake is available.\n{stderr}"
+            )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            path = Path(line)
+            if not path.is_absolute():
+                path = (project_dir / path).resolve()
+            deps.add(path)
+    return deps
 
 
 def module_build_artifact_prefix(mod: str) -> str:

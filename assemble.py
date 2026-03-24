@@ -9,9 +9,9 @@ import shutil
 from pathlib import Path
 
 from import_closure import (
-    build_search_paths,
-    compute_closure,
+    compute_src_deps,
     find_module_build_artifacts,
+    get_lean_src_paths,
     module_to_relpath,
 )
 
@@ -42,6 +42,7 @@ def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
 
 def copy_pruned_oleans(
     needed_modules: set[str],
+    module_to_pkg: dict[str, str],
     build_dirs: dict[str, Path],
     bundle_packages_dir: Path,
     pkg_source_dirs: dict[str, Path],
@@ -62,22 +63,24 @@ def copy_pruned_oleans(
     sources_copied = 0
 
     for mod in sorted(needed_modules):
-        # Determine which package this module belongs to
-        for pkg_name, build_dir in build_dirs.items():
-            # Find and copy ALL build artifacts for this module
+        pkg_name = module_to_pkg.get(mod)
+        if not pkg_name:
+            continue
+        build_dir = build_dirs.get(pkg_name)
+        if build_dir:
             for rel_path, abs_path in find_module_build_artifacts(mod, build_dir):
                 dst = bundle_packages_dir / pkg_name / ".lake" / "build" / "lib" / "lean" / rel_path
                 _copy_file(abs_path, dst)
                 oleans_copied += 1
 
-            # Try to find source in this package
-            if pkg_name in pkg_source_dirs:
-                source_rel = module_to_relpath(mod)
-                src = pkg_source_dirs[pkg_name] / source_rel
-                if src.is_file():
-                    dst = bundle_packages_dir / pkg_name / source_rel
-                    _copy_file(src, dst)
-                    sources_copied += 1
+        source_dir = pkg_source_dirs.get(pkg_name)
+        if source_dir:
+            source_rel = module_to_relpath(mod)
+            src = source_dir / source_rel
+            if src.is_file():
+                dst = bundle_packages_dir / pkg_name / source_rel
+                _copy_file(src, dst)
+                sources_copied += 1
 
     return oleans_copied, sources_copied
 
@@ -255,13 +258,62 @@ def assemble_bundle(
 
     print("Computing import closure...")
     toolchain_lib = bundle_dir / "lean" / "lib" / "lean"
-    search_paths = build_search_paths(project_dir, toolchain_lib)
-    needed = compute_closure(project_dir, search_paths)
+    dep_sources = compute_src_deps(project_dir)
+    print(f"  {len(dep_sources)} source files in transitive deps")
+
+    # Determine source roots from Lake's environment, preserving its order.
+    source_roots = get_lean_src_paths(project_dir)
+    if project_dir not in source_roots:
+        source_roots.insert(0, project_dir)
+    if toolchain_lib not in source_roots and toolchain_lib.is_dir():
+        source_roots.append(toolchain_lib)
+
+    needed: set[str] = set()
+    module_to_pkg: dict[str, str] = {}
+    packages_dir = project_dir / ".lake" / "packages"
+
+    def _first_root(path: Path) -> Path | None:
+        for root in source_roots:
+            try:
+                path.relative_to(root)
+                return root
+            except ValueError:
+                continue
+        return None
+
+    for src in dep_sources:
+        root = _first_root(src)
+        if not root:
+            continue
+        try:
+            rel = src.relative_to(root)
+        except ValueError:
+            continue
+        if rel.suffix != ".lean":
+            continue
+        mod = ".".join(rel.with_suffix("").parts)
+        needed.add(mod)
+
+        pkg_name: str | None = None
+        try:
+            rel_to_packages = src.relative_to(packages_dir)
+            if rel_to_packages.parts:
+                pkg_name = rel_to_packages.parts[0]
+        except ValueError:
+            pass
+        if pkg_name is None and toolchain_lib.is_dir():
+            try:
+                src.relative_to(toolchain_lib)
+                pkg_name = "_toolchain"
+            except ValueError:
+                pass
+        if pkg_name:
+            module_to_pkg[mod] = pkg_name
+
     print(f"  {len(needed)} modules in transitive closure")
 
     print("Copying pruned dependency oleans and sources...")
     # Build maps of package -> build dir and package -> source dir
-    packages_dir = project_dir / ".lake" / "packages"
     build_dirs: dict[str, Path] = {}
     source_dirs: dict[str, Path] = {}
 
@@ -278,7 +330,7 @@ def assemble_bundle(
 
     bundle_packages = bundle_project / ".lake" / "packages"
     n_oleans, n_sources = copy_pruned_oleans(
-        needed, build_dirs, bundle_packages, source_dirs
+        needed, module_to_pkg, build_dirs, bundle_packages, source_dirs
     )
     print(f"  {n_oleans} olean files copied")
     print(f"  {n_sources} source files copied")
