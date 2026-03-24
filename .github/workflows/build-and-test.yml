@@ -21,7 +21,7 @@ jobs:
       - name: Install pytest
         run: pip install pytest
       - name: Run unit tests
-        run: pytest tests/ -v
+        run: pytest tests/test_import_closure.py -v
 
   build-bundle:
     runs-on: ubuntu-latest
@@ -69,6 +69,11 @@ jobs:
     runs-on: windows-latest
     needs: build-bundle
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/download-artifact@v4
         with:
           name: bundle-windows-x64
@@ -85,6 +90,13 @@ jobs:
           echo "Bundle root: $($root.FullName)"
           Get-ChildItem $root.FullName
 
+      # --- Tier 1: Structural integrity ---
+      - name: "Tier 1: Verify bundle structure"
+        shell: pwsh
+        run: |
+          python tests/verify_bundle.py "${{ steps.find-root.outputs.BUNDLE_ROOT }}" --platform windows-x64
+
+      # --- Existing: lean binary test ---
       - name: Test lean binary
         shell: pwsh
         run: |
@@ -106,45 +118,104 @@ jobs:
           }
           echo "LEAN_PATH=$leanPath" >> $env:GITHUB_OUTPUT
 
-      - name: Test lean can process a project file
+      # --- Tier 2: lake build --no-build ---
+      - name: "Tier 2: lake build --no-build"
         shell: pwsh
         run: |
           $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           $env:PATH = "$root\lean\bin;$env:PATH"
           $env:LEAN_PATH = "${{ steps.lean-path.outputs.LEAN_PATH }}"
           $env:ELAN_HOME = "$root\lean"
+          cd "$root\project"
+          lake build --no-build 2>&1 | Select-Object -First 50
 
-          # Find a .lean file in the project
+      # --- Tier 3: LSP protocol test ---
+      - name: "Tier 3: LSP protocol test"
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+
+          # Find a .lean file in the project (not lakefile, not .lake)
           $leanFile = Get-ChildItem "$root\project" -Recurse -Filter "*.lean" |
             Where-Object { $_.FullName -notlike "*\.lake*" -and $_.FullName -notlike "*lakefile*" } |
             Select-Object -First 1
 
           if ($leanFile) {
-            echo "Testing: $($leanFile.FullName)"
-            lean "$($leanFile.FullName)" 2>&1 | Select-Object -First 20
-            if ($LASTEXITCODE -ne 0) {
-              echo "::warning::lean returned exit code $LASTEXITCODE"
-            }
+            python tests/test_lsp.py `
+              "$root\lean\bin" `
+              "${{ steps.lean-path.outputs.LEAN_PATH }}" `
+              "$($leanFile.FullName)" `
+              --timeout 120
           } else {
-            echo "::warning::No .lean files found in project"
+            echo "::warning::No .lean files found"
           }
 
-      - name: Test lean server starts
-        continue-on-error: true
+      # --- Tier 4: VSCodium CLI verification ---
+      - name: "Tier 4: VSCodium extensions check"
         shell: pwsh
-        timeout-minutes: 2
+        continue-on-error: true
         run: |
           $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          $env:PATH = "$root\lean\bin;$env:PATH"
-          $env:LEAN_PATH = "${{ steps.lean-path.outputs.LEAN_PATH }}"
-          $env:ELAN_HOME = "$root\lean"
+          $codium = "$root\vscodium\VSCodium.exe"
+          if (Test-Path $codium) {
+            & $codium --list-extensions 2>&1
+            $extensions = & $codium --list-extensions 2>&1
+            if ($extensions -match "leanprover.lean4") {
+              echo "OK: lean4 extension found"
+            } else {
+              echo "::warning::lean4 extension not listed by VSCodium CLI"
+              echo "Extensions found: $extensions"
+            }
+          } else {
+            echo "::error::VSCodium.exe not found"
+            exit 1
+          }
 
-          # Create input file first, then launch lean --server reading from it
-          $init = '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{}}}'
-          $header = "Content-Length: $($init.Length)`r`n`r`n"
-          Set-Content -Path "$root\lsp_input.txt" -Value "$header$init" -NoNewline
+      # --- Tier 5: Launcher script environment test ---
+      - name: "Tier 5: Launcher environment test"
+        shell: cmd
+        run: |
+          @echo off
+          setlocal EnableDelayedExpansion
 
-          $output = Get-Content "$root\lsp_input.txt" -Raw | lean --server --threads=1 2>&1
-          # lean --server reads stdin until EOF, so piping the input works
-          # Just check it didn't crash immediately
-          echo "Lean server test completed (exit code: $LASTEXITCODE)"
+          set BUNDLE_ROOT=${{ steps.find-root.outputs.BUNDLE_ROOT }}
+
+          :: Simulate what Start Lean.cmd does (without launching VSCodium)
+          set PATH=%BUNDLE_ROOT%\lean\bin;%PATH%
+          set ELAN_HOME=%BUNDLE_ROOT%\lean
+          set LEAN_PATH=%BUNDLE_ROOT%\lean\lib\lean;%BUNDLE_ROOT%\project\.lake\build\lib\lean
+          for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
+              if exist "%%P\.lake\build\lib\lean" (
+                  set LEAN_PATH=!LEAN_PATH!;%%P\.lake\build\lib\lean
+              )
+          )
+
+          :: Verify environment
+          echo === Checking PATH ===
+          where lean.exe
+          if errorlevel 1 (
+              echo FAIL: lean.exe not found in PATH
+              exit /b 1
+          )
+
+          echo === Checking ELAN_HOME ===
+          echo ELAN_HOME=%ELAN_HOME%
+          if not exist "%ELAN_HOME%" (
+              echo FAIL: ELAN_HOME does not exist
+              exit /b 1
+          )
+
+          echo === Checking LEAN_PATH entries ===
+          set FAIL=0
+          for %%D in ("%LEAN_PATH:;=" "%") do (
+              if exist %%D (
+                  echo OK: %%D
+              ) else (
+                  echo FAIL: %%D does not exist
+                  set FAIL=1
+              )
+          )
+          if %FAIL%==1 exit /b 1
+
+          echo === All launcher environment checks passed ===
