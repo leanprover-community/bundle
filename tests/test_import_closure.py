@@ -77,6 +77,11 @@ class TestParseImports:
         f.write_text("public import Foo.Bar\n")
         assert parse_imports(f) == ["Foo.Bar"]
 
+    def test_meta_import(self, tmp_path):
+        f = tmp_path / "test.lean"
+        f.write_text("meta import Foo.Bar\npublic meta import Baz\n")
+        assert parse_imports(f) == ["Foo.Bar", "Baz"]
+
     def test_no_imports(self, tmp_path):
         f = tmp_path / "test.lean"
         f.write_text("def x := 1\n")

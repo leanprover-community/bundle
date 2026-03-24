@@ -9,9 +9,16 @@ from collections import deque
 from pathlib import Path
 
 
-# Matches: import Foo.Bar, public import Foo.Bar, @[...] import Foo.Bar
-# Must appear before any definitions in a Lean file.
-_IMPORT_RE = re.compile(r"^\s*(?:@\[.*?\]\s*)?(?:public\s+)?import\s+(\S+)", re.MULTILINE)
+# Matches all import variants:
+#   import Foo.Bar
+#   public import Foo.Bar
+#   meta import Foo.Bar
+#   public meta import Foo.Bar
+#   @[...] import Foo.Bar
+_IMPORT_RE = re.compile(
+    r"^\s*(?:@\[.*?\]\s*)?(?:public\s+)?(?:meta\s+)?import\s+(\S+)",
+    re.MULTILINE,
+)
 
 
 def parse_imports(path: Path) -> list[str]:
