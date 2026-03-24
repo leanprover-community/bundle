@@ -124,14 +124,14 @@ def rewrite_manifest_to_path_deps(
     for pkg in manifest.get("packages", []):
         if pkg.get("type") == "git":
             pkg_name = pkg["name"]
-            pkg_dir = packages_dir / pkg_name
-            if pkg_dir.is_dir():
-                # Convert from git to path dep
-                pkg["type"] = "path"
-                pkg["dir"] = f".lake/packages/{pkg_name}"
-                # Remove git-specific fields
-                for key in ["url", "rev", "inputRev", "subDir"]:
-                    pkg.pop(key, None)
+            # Convert all git deps to path deps, even if the package
+            # directory doesn't exist (build-time-only deps like Cli).
+            # This prevents lake from trying any git operations.
+            pkg["type"] = "path"
+            pkg["dir"] = f".lake/packages/{pkg_name}"
+            # Remove git-specific fields
+            for key in ["url", "rev", "inputRev", "subDir"]:
+                pkg.pop(key, None)
 
     manifest_path.write_text(json.dumps(manifest, indent=1) + "\n")
 
