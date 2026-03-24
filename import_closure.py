@@ -144,25 +144,33 @@ def build_search_paths(
     return paths
 
 
-def module_to_olean_paths(mod: str) -> list[str]:
-    """Return the list of file extensions for a module's build artifacts.
+def module_build_artifact_prefix(mod: str) -> str:
+    """Return the relative path prefix for a module's build artifacts.
 
-    These are relative to a build lib directory.
-    E.g. for "Mathlib.Algebra.Group.Basic", returns paths like
-    "Mathlib/Algebra/Group/Basic.olean", etc.
-
-    Lean 4 needs .olean, .ilean, .olean.private, .olean.server,
-    and .trace files to fully load a module.
+    E.g. "Mathlib.Algebra.Group.Basic" -> "Mathlib/Algebra/Group/Basic"
+    Use this to glob for all files starting with this prefix in a build dir.
     """
-    base = str(Path(*mod.split(".")))
-    return [
-        base + ".olean",
-        base + ".olean.private",
-        base + ".olean.server",
-        base + ".olean.hash",
-        base + ".olean.private.hash",
-        base + ".olean.server.hash",
-        base + ".ilean",
-        base + ".ilean.hash",
-        base + ".trace",
-    ]
+    return str(Path(*mod.split(".")))
+
+
+def find_module_build_artifacts(mod: str, build_dir: Path) -> list[tuple[str, Path]]:
+    """Find all build artifacts for a module in a build directory.
+
+    Returns list of (relative_path, absolute_path) for each artifact found.
+    This catches all file types (.olean, .ilean, .olean.private,
+    .olean.server, .ir, .trace, .hash, .extra, etc.) without
+    needing to enumerate them.
+    """
+    prefix = module_build_artifact_prefix(mod)
+    parent = build_dir / Path(prefix).parent
+    stem = Path(prefix).name
+
+    if not parent.is_dir():
+        return []
+
+    results = []
+    for f in parent.iterdir():
+        if f.is_file() and f.name.startswith(stem + "."):
+            rel = str(f.relative_to(build_dir))
+            results.append((rel, f))
+    return results

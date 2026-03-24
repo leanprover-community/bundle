@@ -11,7 +11,7 @@ from pathlib import Path
 from import_closure import (
     build_search_paths,
     compute_closure,
-    module_to_olean_paths,
+    find_module_build_artifacts,
     module_to_relpath,
 )
 
@@ -64,13 +64,11 @@ def copy_pruned_oleans(
     for mod in sorted(needed_modules):
         # Determine which package this module belongs to
         for pkg_name, build_dir in build_dirs.items():
-            # Try to find oleans in this build dir
-            for olean_rel in module_to_olean_paths(mod):
-                src = build_dir / olean_rel
-                if src.is_file():
-                    dst = bundle_packages_dir / pkg_name / ".lake" / "build" / "lib" / "lean" / olean_rel
-                    _copy_file(src, dst)
-                    oleans_copied += 1
+            # Find and copy ALL build artifacts for this module
+            for rel_path, abs_path in find_module_build_artifacts(mod, build_dir):
+                dst = bundle_packages_dir / pkg_name / ".lake" / "build" / "lib" / "lean" / rel_path
+                _copy_file(abs_path, dst)
+                oleans_copied += 1
 
             # Try to find source in this package
             if pkg_name in pkg_source_dirs:

@@ -14,7 +14,8 @@ from import_closure import (
     module_to_relpath,
     find_module_source,
     compute_closure,
-    module_to_olean_paths,
+    find_module_build_artifacts,
+    module_build_artifact_prefix,
 )
 
 
@@ -166,10 +167,23 @@ class TestComputeClosure:
         assert "Dep.Extra" not in closure
 
 
-class TestModuleToOleanPaths:
-    def test_paths(self):
-        paths = module_to_olean_paths("Mathlib.Algebra.Group.Basic")
-        assert "Mathlib/Algebra/Group/Basic.olean" in paths
-        assert "Mathlib/Algebra/Group/Basic.ilean" in paths
-        assert "Mathlib/Algebra/Group/Basic.olean.private" in paths
-        assert "Mathlib/Algebra/Group/Basic.trace" in paths
+class TestModuleBuildArtifacts:
+    def test_prefix(self):
+        assert module_build_artifact_prefix("Mathlib.Algebra.Group.Basic") == "Mathlib/Algebra/Group/Basic"
+
+    def test_find_artifacts(self, tmp_path):
+        build_dir = tmp_path / "build"
+        (build_dir / "Foo" / "Bar").mkdir(parents=True)
+        (build_dir / "Foo" / "Bar" / "Baz.olean").write_bytes(b"")
+        (build_dir / "Foo" / "Bar" / "Baz.ilean").write_bytes(b"")
+        (build_dir / "Foo" / "Bar" / "Baz.olean.private").write_bytes(b"")
+        (build_dir / "Foo" / "Bar" / "Baz.ir").write_bytes(b"")
+        (build_dir / "Foo" / "Bar" / "Other.olean").write_bytes(b"")  # different module
+
+        artifacts = find_module_build_artifacts("Foo.Bar.Baz", build_dir)
+        rel_paths = [r for r, _ in artifacts]
+        assert "Foo/Bar/Baz.olean" in rel_paths
+        assert "Foo/Bar/Baz.ilean" in rel_paths
+        assert "Foo/Bar/Baz.olean.private" in rel_paths
+        assert "Foo/Bar/Baz.ir" in rel_paths
+        assert "Foo/Bar/Other.olean" not in rel_paths  # different module
