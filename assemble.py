@@ -82,6 +82,30 @@ def copy_pruned_oleans(
     return oleans_copied, sources_copied
 
 
+def copy_package_configs(
+    packages_dir: Path,
+    bundle_packages_dir: Path,
+) -> None:
+    """Copy package configuration files (lakefile, lean-toolchain, etc.).
+
+    Lake needs these to load the workspace even with --no-build.
+    """
+    config_files = [
+        "lakefile.toml", "lakefile.lean", "lean-toolchain",
+        "lake-manifest.json", "lakefile",
+    ]
+    if not packages_dir.is_dir():
+        return
+    for pkg in sorted(packages_dir.iterdir()):
+        if not pkg.is_dir():
+            continue
+        dst_pkg = bundle_packages_dir / pkg.name
+        for cf in config_files:
+            src = pkg / cf
+            if src.is_file():
+                _copy_file(src, dst_pkg / cf)
+
+
 def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
     """Copy the project's own oleans into the bundle.
 
@@ -234,6 +258,9 @@ def assemble_bundle(
     )
     print(f"  {n_oleans} olean files copied")
     print(f"  {n_sources} source files copied")
+
+    print("Copying package config files...")
+    copy_package_configs(packages_dir, bundle_packages)
 
     print("Rewriting manifest to path deps...")
     rewrite_manifest_to_path_deps(bundle_project)
