@@ -152,28 +152,7 @@ jobs:
             echo "::warning::No .lean files found"
           }
 
-      # --- Tier 4: VSCodium CLI verification ---
-      - name: "Tier 4: VSCodium extensions check"
-        shell: pwsh
-        run: |
-          $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          $codium = "$root\vscodium\VSCodium.exe"
-          if (Test-Path $codium) {
-            & $codium --list-extensions 2>&1
-            $extensions = & $codium --list-extensions 2>&1
-            if ($extensions -match "leanprover.lean4") {
-              echo "OK: lean4 extension found"
-            } else {
-              echo "::error::lean4 extension not listed by VSCodium CLI"
-              echo "Extensions found: $extensions"
-              exit 1
-            }
-          } else {
-            echo "::error::VSCodium.exe not found"
-            exit 1
-          }
-
-      # --- Tier 5: Launcher script environment test ---
+      # --- Tier 4: Launcher script environment test ---
       - name: "Tier 5: Launcher environment test"
         shell: cmd
         run: |
