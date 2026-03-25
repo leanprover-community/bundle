@@ -15,9 +15,9 @@ suite('Extension Activation', () => {
 });
 
 suite('Settings', () => {
-    test('lean4.automaticallyBuildDependencies is false', () => {
-        const config = vscode.workspace.getConfiguration('lean4');
-        assert.strictEqual(config.get('automaticallyBuildDependencies'), false);
+    test('extensions.autoUpdate is false', () => {
+        const config = vscode.workspace.getConfiguration('extensions');
+        assert.strictEqual(config.get('autoUpdate'), false);
     });
 
     test('update.mode is none', () => {
