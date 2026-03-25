@@ -24,6 +24,7 @@ This produces `MDD154-bundle-windows-x64.zip` containing:
 - Python 3.11+
 - Git
 - [elan](https://github.com/leanprover/elan) with the project's Lean toolchain
+- Lean 4.17+ (for `lean --src-deps`)
 - Network access (to download components and mathlib cache)
 
 Students need none of these.

@@ -8,18 +8,56 @@ import json
 import shutil
 from pathlib import Path
 
-from import_closure import (
-    build_search_paths,
-    compute_closure,
-    find_module_build_artifacts,
-    module_to_relpath,
-)
+from import_closure import compute_src_deps, find_module_build_artifacts, module_to_relpath
 
 
 def _copy_file(src: Path, dst: Path) -> None:
     """Copy a file, creating parent directories as needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def classify_dep_source(
+    src: Path,
+    project_dir: Path,
+    packages_dir: Path,
+    toolchain_lib: Path,
+) -> tuple[str, str | None] | None:
+    """Map a dependency source path to its module name and owning package.
+
+    Project sources are returned with `pkg_name=None` because they are copied
+    separately; package and toolchain sources include the package key used by
+    `copy_pruned_oleans`.
+    """
+    if src.suffix != ".lean":
+        return None
+
+    try:
+        rel = src.relative_to(packages_dir)
+    except ValueError:
+        rel = None
+    if rel and len(rel.parts) >= 2:
+        pkg_name = rel.parts[0]
+        mod = ".".join(Path(*rel.parts[1:]).with_suffix("").parts)
+        return mod, pkg_name
+
+    try:
+        rel = src.relative_to(toolchain_lib)
+    except ValueError:
+        rel = None
+    if rel and rel.parts:
+        mod = ".".join(rel.with_suffix("").parts)
+        return mod, "_toolchain"
+
+    try:
+        rel = src.relative_to(project_dir)
+    except ValueError:
+        rel = None
+    if rel and ".lake" not in rel.parts:
+        mod = ".".join(rel.with_suffix("").parts)
+        return mod, None
+
+    return None
 
 
 def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
@@ -42,6 +80,7 @@ def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
 
 def copy_pruned_oleans(
     needed_modules: set[str],
+    module_to_pkg: dict[str, str],
     build_dirs: dict[str, Path],
     bundle_packages_dir: Path,
     pkg_source_dirs: dict[str, Path],
@@ -62,22 +101,24 @@ def copy_pruned_oleans(
     sources_copied = 0
 
     for mod in sorted(needed_modules):
-        # Determine which package this module belongs to
-        for pkg_name, build_dir in build_dirs.items():
-            # Find and copy ALL build artifacts for this module
+        pkg_name = module_to_pkg.get(mod)
+        if not pkg_name:
+            continue
+        build_dir = build_dirs.get(pkg_name)
+        if build_dir:
             for rel_path, abs_path in find_module_build_artifacts(mod, build_dir):
                 dst = bundle_packages_dir / pkg_name / ".lake" / "build" / "lib" / "lean" / rel_path
                 _copy_file(abs_path, dst)
                 oleans_copied += 1
 
-            # Try to find source in this package
-            if pkg_name in pkg_source_dirs:
-                source_rel = module_to_relpath(mod)
-                src = pkg_source_dirs[pkg_name] / source_rel
-                if src.is_file():
-                    dst = bundle_packages_dir / pkg_name / source_rel
-                    _copy_file(src, dst)
-                    sources_copied += 1
+        source_dir = pkg_source_dirs.get(pkg_name)
+        if source_dir:
+            source_rel = module_to_relpath(mod)
+            src = source_dir / source_rel
+            if src.is_file():
+                dst = bundle_packages_dir / pkg_name / source_rel
+                _copy_file(src, dst)
+                sources_copied += 1
 
     return oleans_copied, sources_copied
 
@@ -176,12 +217,18 @@ def setup_vscodium_portable(
     data_dir = vscodium_dir / "data"
     data_dir.mkdir(exist_ok=True)
 
+    # VSIX archives often contain their actual extension payload under
+    # `extension/`; VSCodium expects package.json at the extension root.
+    extension_root = extension_dir / "extension"
+    if not extension_root.is_dir():
+        extension_root = extension_dir
+
     # Install extension
     extensions_dir = data_dir / "extensions"
     ext_dest = extensions_dir / extension_dir.name
     if ext_dest.exists():
         shutil.rmtree(ext_dest)
-    shutil.copytree(extension_dir, ext_dest)
+    shutil.copytree(extension_root, ext_dest)
 
     # Read extension metadata for the registry
     ext_package = ext_dest / "package.json"
@@ -255,13 +302,26 @@ def assemble_bundle(
 
     print("Computing import closure...")
     toolchain_lib = bundle_dir / "lean" / "lib" / "lean"
-    search_paths = build_search_paths(project_dir, toolchain_lib)
-    needed = compute_closure(project_dir, search_paths)
+    dep_sources = compute_src_deps(project_dir)
+    print(f"  {len(dep_sources)} source files in transitive deps")
+
+    needed: set[str] = set()
+    module_to_pkg: dict[str, str] = {}
+    packages_dir = project_dir / ".lake" / "packages"
+
+    for src in dep_sources:
+        classified = classify_dep_source(src, project_dir, packages_dir, toolchain_lib)
+        if classified is None:
+            continue
+        mod, pkg_name = classified
+        needed.add(mod)
+        if pkg_name:
+            module_to_pkg[mod] = pkg_name
+
     print(f"  {len(needed)} modules in transitive closure")
 
     print("Copying pruned dependency oleans and sources...")
     # Build maps of package -> build dir and package -> source dir
-    packages_dir = project_dir / ".lake" / "packages"
     build_dirs: dict[str, Path] = {}
     source_dirs: dict[str, Path] = {}
 
@@ -278,7 +338,7 @@ def assemble_bundle(
 
     bundle_packages = bundle_project / ".lake" / "packages"
     n_oleans, n_sources = copy_pruned_oleans(
-        needed, build_dirs, bundle_packages, source_dirs
+        needed, module_to_pkg, build_dirs, bundle_packages, source_dirs
     )
     print(f"  {n_oleans} olean files copied")
     print(f"  {n_sources} source files copied")
