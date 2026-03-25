@@ -6,6 +6,7 @@ into the final bundle layout.
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 from import_closure import compute_src_deps, find_module_build_artifacts, module_to_relpath
@@ -242,13 +243,22 @@ def setup_vscodium_portable(
         ext_publisher = pkg.get("publisher", ext_publisher)
         ext_name = pkg.get("name", ext_name)
 
-    # Write extensions.json registry so --list-extensions works
+    # Write extensions.json registry for VSCodium extension loading.
+    # The location field with $mid is VS Code's internal URI format;
+    # without it, VSCodium can't resolve the extension path.
     registry = [
         {
             "identifier": {"id": f"{ext_publisher}.{ext_name}"},
             "version": ext_version,
+            "location": {
+                "$mid": 1,
+                "path": f"/{extension_dir.name}",
+                "scheme": "file",
+            },
             "relativeLocation": extension_dir.name,
-            "metadata": {},
+            "metadata": {
+                "installedTimestamp": int(time.time() * 1000),
+            },
         }
     ]
     (extensions_dir / "extensions.json").write_text(json.dumps(registry, indent=2) + "\n")
