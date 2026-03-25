@@ -9,12 +9,11 @@ tested end-to-end in CI on a GitHub Actions Windows runner.
 
 | Tier | What | Status |
 |------|------|--------|
-| 1 | Structural integrity (files, DLLs, git stubs, settings) | Done |
-| 2 | `lake build --no-build` (olean completeness via lake) | Done |
+| 1 | Structural integrity (files, DLLs, path deps, settings, extension dir) | Done |
+| 2 | `lake build --no-build` (olean completeness via lake, offline) | Done |
 | 3 | LSP protocol test (language server responds to didOpen) | Done |
-| 4 | VSCodium CLI (extension listed) | Done |
-| 5 | Launcher script (environment variables correct) | Done |
-| 6 | Full GUI test (VSCodium + lean4 extension + infoview) | **Not yet** |
+| 4 | Launcher script (environment variables correct) | Done |
+| 5 | Full GUI test (VSCodium + lean4 extension + infoview) | **Not yet** |
 
 ## Future Work
 
