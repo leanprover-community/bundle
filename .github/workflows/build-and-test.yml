@@ -153,12 +153,8 @@ jobs:
           }
 
       # --- Tier 4: VSCodium CLI verification ---
-      # Note: --list-extensions may not recognize manually-placed extensions
-      # (VS Code uses a profile/registry layer). The structural check in
-      # verify_bundle.py already confirms the extension files exist.
       - name: "Tier 4: VSCodium extensions check"
         shell: pwsh
-        continue-on-error: true  # CLI may not list manually-installed extensions
         run: |
           $root = "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           $codium = "$root\vscodium\VSCodium.exe"
@@ -168,8 +164,9 @@ jobs:
             if ($extensions -match "leanprover.lean4") {
               echo "OK: lean4 extension found"
             } else {
-              echo "::warning::lean4 extension not listed by VSCodium CLI"
+              echo "::error::lean4 extension not listed by VSCodium CLI"
               echo "Extensions found: $extensions"
+              exit 1
             }
           } else {
             echo "::error::VSCodium.exe not found"

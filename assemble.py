@@ -177,10 +177,34 @@ def setup_vscodium_portable(
     data_dir.mkdir(exist_ok=True)
 
     # Install extension
-    ext_dest = data_dir / "extensions" / extension_dir.name
+    extensions_dir = data_dir / "extensions"
+    ext_dest = extensions_dir / extension_dir.name
     if ext_dest.exists():
         shutil.rmtree(ext_dest)
     shutil.copytree(extension_dir, ext_dest)
+
+    # Read extension metadata for the registry
+    ext_package = ext_dest / "package.json"
+    ext_id = extension_dir.name  # e.g. "leanprover.lean4-0.0.225"
+    ext_version = "0.0.0"
+    ext_publisher = "leanprover"
+    ext_name = "lean4"
+    if ext_package.is_file():
+        pkg = json.loads(ext_package.read_text())
+        ext_version = pkg.get("version", ext_version)
+        ext_publisher = pkg.get("publisher", ext_publisher)
+        ext_name = pkg.get("name", ext_name)
+
+    # Write extensions.json registry so --list-extensions works
+    registry = [
+        {
+            "identifier": {"id": f"{ext_publisher}.{ext_name}"},
+            "version": ext_version,
+            "relativeLocation": extension_dir.name,
+            "metadata": {},
+        }
+    ]
+    (extensions_dir / "extensions.json").write_text(json.dumps(registry, indent=2) + "\n")
 
     # Create user settings
     user_dir = data_dir / "user-data" / "User"
