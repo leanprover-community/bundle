@@ -204,69 +204,66 @@ def rewrite_manifest_to_path_deps(
 
 def setup_vscodium_portable(
     vscodium_dir: Path,
-    extension_dir: Path,
+    extension_dirs: list[Path],
     settings_template: Path,
 ) -> None:
-    """Set up VSCodium in portable mode with the lean4 extension pre-installed.
+    """Set up VSCodium in portable mode with extensions pre-installed.
 
     Args:
         vscodium_dir: Path to extracted VSCodium.
-        extension_dir: Path to extracted lean4 extension.
+        extension_dirs: Paths to extracted extensions (lean4 + dependencies).
         settings_template: Path to settings.json template.
     """
     # Create portable data directory
     data_dir = vscodium_dir / "data"
     data_dir.mkdir(exist_ok=True)
-
-    # VSIX archives often contain their actual extension payload under
-    # `extension/`; VSCodium expects package.json at the extension root.
-    extension_root = extension_dir / "extension"
-    if not extension_root.is_dir():
-        extension_root = extension_dir
-
-    # Install extension
     extensions_dir = data_dir / "extensions"
-    ext_dest = extensions_dir / extension_dir.name
-    if ext_dest.exists():
-        shutil.rmtree(ext_dest)
-    shutil.copytree(extension_root, ext_dest)
 
-    # Read extension metadata for the registry
-    ext_package = ext_dest / "package.json"
-    ext_id = extension_dir.name  # e.g. "leanprover.lean4-0.0.225"
-    ext_version = "0.0.0"
-    ext_publisher = "leanprover"
-    ext_name = "lean4"
-    if ext_package.is_file():
-        pkg = json.loads(ext_package.read_text())
-        ext_version = pkg.get("version", ext_version)
-        ext_publisher = pkg.get("publisher", ext_publisher)
-        ext_name = pkg.get("name", ext_name)
+    registry = []
 
-        # Strip extensionDependencies that aren't bundled (e.g. even-better-toml).
-        # Without this, VSCodium refuses to activate the extension.
-        if pkg.get("extensionDependencies"):
-            pkg["extensionDependencies"] = []
-            ext_package.write_text(json.dumps(pkg, indent=2) + "\n")
+    for extension_dir in extension_dirs:
+        # VSIX archives often contain their actual extension payload under
+        # `extension/`; VSCodium expects package.json at the extension root.
+        extension_root = extension_dir / "extension"
+        if not extension_root.is_dir():
+            extension_root = extension_dir
 
-    # Write extensions.json registry for VSCodium extension loading.
-    # The location field with $mid is VS Code's internal URI format;
-    # without it, VSCodium can't resolve the extension path.
-    registry = [
-        {
-            "identifier": {"id": f"{ext_publisher}.{ext_name}"},
-            "version": ext_version,
-            "location": {
-                "$mid": 1,
-                "path": f"/{extension_dir.name}",
-                "scheme": "file",
-            },
-            "relativeLocation": extension_dir.name,
-            "metadata": {
-                "installedTimestamp": int(time.time() * 1000),
-            },
-        }
-    ]
+        # Install extension
+        ext_dest = extensions_dir / extension_dir.name
+        if ext_dest.exists():
+            shutil.rmtree(ext_dest)
+        shutil.copytree(extension_root, ext_dest)
+
+        # Read extension metadata for the registry
+        ext_package = ext_dest / "package.json"
+        ext_version = "0.0.0"
+        ext_publisher = "unknown"
+        ext_name = extension_dir.name
+        if ext_package.is_file():
+            pkg = json.loads(ext_package.read_text())
+            ext_version = pkg.get("version", ext_version)
+            ext_publisher = pkg.get("publisher", ext_publisher)
+            ext_name = pkg.get("name", ext_name)
+
+        # Write extensions.json registry entry.
+        # The location field with $mid is VS Code's internal URI format;
+        # without it, VSCodium can't resolve the extension path.
+        registry.append(
+            {
+                "identifier": {"id": f"{ext_publisher}.{ext_name}"},
+                "version": ext_version,
+                "location": {
+                    "$mid": 1,
+                    "path": f"/{extension_dir.name}",
+                    "scheme": "file",
+                },
+                "relativeLocation": extension_dir.name,
+                "metadata": {
+                    "installedTimestamp": int(time.time() * 1000),
+                },
+            }
+        )
+
     (extensions_dir / "extensions.json").write_text(json.dumps(registry, indent=2) + "\n")
 
     # Create user settings
@@ -279,7 +276,7 @@ def assemble_bundle(
     project_dir: Path,
     lean_dir: Path,
     vscodium_dir: Path,
-    extension_dir: Path,
+    extension_dirs: list[Path],
     templates_dir: Path,
     bundle_dir: Path,
     platform: str,
@@ -290,7 +287,7 @@ def assemble_bundle(
         project_dir: The built project directory (with .lake/packages/ and oleans).
         lean_dir: Extracted and trimmed lean toolchain directory.
         vscodium_dir: Extracted VSCodium directory.
-        extension_dir: Extracted lean4 extension directory.
+        extension_dirs: Extracted extension directories (lean4 + dependencies).
         templates_dir: Directory containing launcher and settings templates.
         bundle_dir: Output bundle directory to create.
         platform: Target platform key.
@@ -304,7 +301,7 @@ def assemble_bundle(
     shutil.copytree(vscodium_dir, bundle_dir / "vscodium", dirs_exist_ok=True)
     setup_vscodium_portable(
         bundle_dir / "vscodium",
-        extension_dir,
+        extension_dirs,
         templates_dir / "settings.json",
     )
 

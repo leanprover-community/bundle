@@ -175,7 +175,7 @@ def main() -> None:
 
         lean_dir = download_lean_toolchain(lean_version, args.platform, downloads_dir)
         vscodium_dir = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
-        extension_dir = download_lean4_extension(downloads_dir, args.extension_version)
+        extension_dirs = download_lean4_extension(downloads_dir, args.extension_version)
 
         # Step 4: Build project (if not pre-built)
         if not args.project_dir:
@@ -193,7 +193,7 @@ def main() -> None:
             project_dir=project_dir,
             lean_dir=lean_dir,
             vscodium_dir=vscodium_dir,
-            extension_dir=extension_dir,
+            extension_dirs=extension_dirs,
             templates_dir=templates_dir,
             bundle_dir=bundle_dir,
             platform=args.platform,

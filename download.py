@@ -177,15 +177,69 @@ def _get_latest_lean4_extension_version() -> str:
     return data["tag_name"].lstrip("v")
 
 
-def download_lean4_extension(dest_dir: Path, version: str | None = None) -> Path:
-    """Download and extract the lean4 VS Code extension.
+def _extract_vsix(vsix_path: Path, ext_dir: Path) -> None:
+    """Extract a VSIX archive to a directory.
+
+    A VSIX is a zip with an extension/ subdirectory containing the actual
+    extension files. VS Code expects package.json at the extension root,
+    so we extract extension/* to the root, discarding the VSIX metadata.
+    """
+    ext_dir.mkdir(exist_ok=True)
+    with zipfile.ZipFile(vsix_path) as zf:
+        prefix = "extension/"
+        for info in zf.infolist():
+            if info.filename.startswith(prefix):
+                info.filename = info.filename[len(prefix):]
+                if info.filename:
+                    zf.extract(info, ext_dir)
+    vsix_path.unlink()
+
+
+def download_openvsx_extension(
+    publisher: str, name: str, dest_dir: Path, version: str | None = None
+) -> Path:
+    """Download a VS Code extension from Open VSX.
 
     Args:
-        dest_dir: Directory to extract the extension into.
-        version: Optional version string; uses latest if None.
+        publisher: Extension publisher (e.g. "tamasfe").
+        name: Extension name (e.g. "even-better-toml").
+        dest_dir: Directory to extract into.
+        version: Optional version; uses latest if None.
 
     Returns:
         Path to the extracted extension directory.
+    """
+    ext_id = f"{publisher}.{name}"
+
+    if version is None:
+        url = f"https://open-vsx.org/api/{publisher}/{name}/latest"
+        data = json.loads(_download_bytes(url))
+        version = data["version"]
+
+    print(f"  Downloading {ext_id} v{version} from Open VSX...")
+    vsix_url = f"https://open-vsx.org/api/{publisher}/{name}/{version}/file/{ext_id}-{version}.vsix"
+    vsix_path = dest_dir / f"{ext_id}-{version}.vsix"
+    _download(vsix_url, vsix_path)
+
+    ext_dir = dest_dir / f"{ext_id}-{version}"
+    print(f"  Extracting {ext_id}...")
+    _extract_vsix(vsix_path, ext_dir)
+
+    return ext_dir
+
+
+def download_lean4_extension(
+    dest_dir: Path, version: str | None = None
+) -> list[Path]:
+    """Download the lean4 VS Code extension and its dependencies.
+
+    Args:
+        dest_dir: Directory to extract extensions into.
+        version: Optional version string; uses latest if None.
+
+    Returns:
+        List of paths to extracted extension directories.
+        The lean4 extension is first, followed by its dependencies.
     """
     if version is None:
         version = _get_latest_lean4_extension_version()
@@ -198,29 +252,26 @@ def download_lean4_extension(dest_dir: Path, version: str | None = None) -> Path
     try:
         _download(url, vsix_path)
     except urllib.error.HTTPError:
-        # Fall back to Open VSX
         url = f"https://open-vsx.org/api/leanprover/lean4/{version}/file/leanprover.lean4-{version}.vsix"
         _download(url, vsix_path)
 
-    # A VSIX is a zip with an extension/ subdirectory containing the actual
-    # extension files. VS Code expects package.json at the extension root,
-    # so we extract extension/* to the root, discarding the VSIX metadata.
     ext_dir = dest_dir / f"leanprover.lean4-{version}"
-    ext_dir.mkdir(exist_ok=True)
-
     print(f"  Extracting lean4 extension...")
-    with zipfile.ZipFile(vsix_path) as zf:
-        prefix = "extension/"
-        for info in zf.infolist():
-            if info.filename.startswith(prefix):
-                # Strip the extension/ prefix
-                info.filename = info.filename[len(prefix):]
-                if info.filename:  # skip the empty directory entry
-                    zf.extract(info, ext_dir)
+    _extract_vsix(vsix_path, ext_dir)
 
-    vsix_path.unlink()
+    extension_dirs = [ext_dir]
 
-    return ext_dir
+    # Download extension dependencies
+    pkg_path = ext_dir / "package.json"
+    if pkg_path.is_file():
+        pkg = json.loads(pkg_path.read_text())
+        for dep_id in pkg.get("extensionDependencies", []):
+            parts = dep_id.split(".", 1)
+            if len(parts) == 2:
+                dep_dir = download_openvsx_extension(parts[0], parts[1], dest_dir)
+                extension_dirs.append(dep_dir)
+
+    return extension_dirs
 
 
 def trim_lean_toolchain(lean_dir: Path, platform: str) -> None:
