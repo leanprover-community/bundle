@@ -73,6 +73,8 @@ async function main() {
             extensionTestsPath: path.resolve(__dirname, 'suite', 'index'),
             launchArgs: [
                 projectPath,
+                '--extensions-dir', path.join(bundleRoot, 'vscodium', 'data', 'extensions'),
+                '--user-data-dir', path.join(bundleRoot, 'vscodium', 'data', 'user-data'),
                 '--disable-gpu',
                 '--no-sandbox',
                 '--disable-gpu-sandbox',
