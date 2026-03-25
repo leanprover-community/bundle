@@ -1,3 +1,9 @@
+---
+name: windows-vm-incus
+description: Create and manage Windows VMs using Incus for local testing. Use when the user needs a Windows environment for testing, CI validation, or running Windows-specific tools.
+allowed-tools: Read, Bash, Glob, Grep
+---
+
 # Windows VM on Incus
 
 Create and manage Windows VMs using Incus for local testing. Use when the user needs a Windows environment for testing, CI validation, or running Windows-specific tools.
