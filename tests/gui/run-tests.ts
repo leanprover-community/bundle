@@ -54,8 +54,12 @@ async function main() {
 
     // Set environment variables matching start_lean.cmd / start_lean.sh
     const leanBin = path.join(bundleRoot, 'lean', 'bin');
+    const gitCmd = path.join(bundleRoot, 'git', 'cmd');
     const pathSep = isWindows ? ';' : ':';
-    process.env.PATH = leanBin + pathSep + (process.env.PATH || '');
+    const extraPaths = fs.existsSync(gitCmd)
+        ? leanBin + pathSep + gitCmd
+        : leanBin;
+    process.env.PATH = extraPaths + pathSep + (process.env.PATH || '');
     process.env.ELAN_HOME = path.join(bundleRoot, 'lean');
     process.env.LEAN_PATH = buildLeanPath(bundleRoot);
     process.env.BUNDLE_ROOT = bundleRoot;

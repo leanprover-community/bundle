@@ -37,6 +37,36 @@ PLATFORM_MAP = {
 }
 
 
+MINGIT_VERSION = "2.47.1.2"
+MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{MINGIT_VERSION.replace('.2', '.windows.2')}/MinGit-{MINGIT_VERSION}-64-bit.zip"
+
+
+def download_mingit(dest_dir: Path, platform: str) -> Path | None:
+    """Download MinGit for Windows. Returns None on non-Windows platforms.
+
+    The lean4 VS Code extension requires git on PATH. Students may not
+    have git installed, so we bundle MinGit.
+    """
+    if not platform.startswith("windows"):
+        return None
+
+    mingit_dir = dest_dir / "mingit"
+    if mingit_dir.is_dir():
+        return mingit_dir
+
+    archive = dest_dir / f"MinGit-{MINGIT_VERSION}-64-bit.zip"
+    print(f"  Downloading MinGit {MINGIT_VERSION}...")
+    _download(MINGIT_URL, archive)
+
+    print(f"  Extracting MinGit...")
+    mingit_dir.mkdir(exist_ok=True)
+    with zipfile.ZipFile(archive) as zf:
+        zf.extractall(mingit_dir)
+    archive.unlink()
+
+    return mingit_dir
+
+
 def parse_toolchain(toolchain_file: Path) -> str:
     """Parse the lean-toolchain file and return the version string.
 

@@ -277,6 +277,7 @@ def assemble_bundle(
     lean_dir: Path,
     vscodium_dir: Path,
     extension_dirs: list[Path],
+    mingit_dir: Path | None,
     templates_dir: Path,
     bundle_dir: Path,
     platform: str,
@@ -288,6 +289,7 @@ def assemble_bundle(
         lean_dir: Extracted and trimmed lean toolchain directory.
         vscodium_dir: Extracted VSCodium directory.
         extension_dirs: Extracted extension directories (lean4 + dependencies).
+        mingit_dir: Extracted MinGit directory (Windows only, None on other platforms).
         templates_dir: Directory containing launcher and settings templates.
         bundle_dir: Output bundle directory to create.
         platform: Target platform key.
@@ -296,6 +298,10 @@ def assemble_bundle(
 
     print("Copying lean toolchain...")
     shutil.copytree(lean_dir, bundle_dir / "lean", dirs_exist_ok=True)
+
+    if mingit_dir is not None:
+        print("Copying MinGit...")
+        shutil.copytree(mingit_dir, bundle_dir / "git", dirs_exist_ok=True)
 
     print("Setting up VSCodium...")
     shutil.copytree(vscodium_dir, bundle_dir / "vscodium", dirs_exist_ok=True)
