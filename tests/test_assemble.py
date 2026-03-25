@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from assemble import classify_dep_source
+import json
+
+from assemble import classify_dep_source, setup_vscodium_portable
 
 
 def test_classify_dep_source_package() -> None:
@@ -37,3 +39,22 @@ def test_classify_dep_source_project() -> None:
         "MyProject.Main",
         None,
     )
+
+
+def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
+    vscodium_dir = tmp_path / "vscodium"
+    vscodium_dir.mkdir()
+
+    extension_dir = tmp_path / "leanprover.lean4-1.0.0"
+    nested = extension_dir / "extension"
+    nested.mkdir(parents=True)
+    (nested / "package.json").write_text(json.dumps({"name": "lean4"}))
+
+    settings_template = tmp_path / "settings.json"
+    settings_template.write_text("{}")
+
+    setup_vscodium_portable(vscodium_dir, extension_dir, settings_template)
+
+    ext_dest = vscodium_dir / "data" / "extensions" / extension_dir.name
+    assert (ext_dest / "package.json").is_file()
+    assert not (ext_dest / "extension" / "package.json").exists()

@@ -217,12 +217,18 @@ def setup_vscodium_portable(
     data_dir = vscodium_dir / "data"
     data_dir.mkdir(exist_ok=True)
 
+    # VSIX archives often contain their actual extension payload under
+    # `extension/`; VSCodium expects package.json at the extension root.
+    extension_root = extension_dir / "extension"
+    if not extension_root.is_dir():
+        extension_root = extension_dir
+
     # Install extension
     extensions_dir = data_dir / "extensions"
     ext_dest = extensions_dir / extension_dir.name
     if ext_dest.exists():
         shutil.rmtree(ext_dest)
-    shutil.copytree(extension_dir, ext_dest)
+    shutil.copytree(extension_root, ext_dest)
 
     # Read extension metadata for the registry
     ext_package = ext_dest / "package.json"
