@@ -4,7 +4,7 @@ import Mocha from 'mocha';
 
 export function run(): Promise<void> {
     const mocha = new Mocha({
-        ui: 'bdd',
+        ui: 'tdd',
         color: true,
         timeout: 120_000,  // 120s per test -- language server startup can be slow
     });
