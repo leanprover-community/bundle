@@ -243,6 +243,12 @@ def setup_vscodium_portable(
         ext_publisher = pkg.get("publisher", ext_publisher)
         ext_name = pkg.get("name", ext_name)
 
+        # Strip extensionDependencies that aren't bundled (e.g. even-better-toml).
+        # Without this, VSCodium refuses to activate the extension.
+        if pkg.get("extensionDependencies"):
+            pkg["extensionDependencies"] = []
+            ext_package.write_text(json.dumps(pkg, indent=2) + "\n")
+
     # Write extensions.json registry for VSCodium extension loading.
     # The location field with $mid is VS Code's internal URI format;
     # without it, VSCodium can't resolve the extension path.
