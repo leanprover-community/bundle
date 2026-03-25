@@ -14,6 +14,7 @@ from import_closure import (
     module_to_relpath,
     find_module_source,
     compute_closure,
+    compute_src_deps,
     find_module_build_artifacts,
     module_build_artifact_prefix,
 )
@@ -165,6 +166,42 @@ class TestComputeClosure:
         assert "MyLib.Advanced" in closure
         assert "Dep.Core" not in closure
         assert "Dep.Extra" not in closure
+
+
+class TestComputeSrcDeps:
+    def test_transitive_walks_src_deps_graph(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        project.mkdir()
+        main = project / "Main.lean"
+        main.write_text("import A\n")
+
+        dep_a = tmp_path / "deps" / "A.lean"
+        dep_a.parent.mkdir(parents=True)
+        dep_a.write_text("import B\n")
+
+        dep_b = tmp_path / "deps" / "B.lean"
+        dep_b.write_text("def b := 1\n")
+
+        outputs = {
+            str(main.resolve()): f"{dep_a}\n",
+            str(dep_a.resolve()): f"{dep_b}\n",
+            str(dep_b.resolve()): "",
+        }
+
+        class FakeResult:
+            def __init__(self, stdout: str):
+                self.stdout = stdout
+                self.stderr = ""
+                self.returncode = 0
+
+        def fake_run(cmd, cwd, capture_output, text):
+            return FakeResult(outputs[str(Path(cmd[-1]).resolve())])
+
+        monkeypatch.setattr("import_closure.subprocess.run", fake_run)
+
+        deps = compute_src_deps(project)
+
+        assert deps == {dep_a.resolve(), dep_b.resolve()}
 
 
 class TestModuleBuildArtifacts:

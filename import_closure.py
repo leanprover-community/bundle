@@ -189,9 +189,19 @@ def compute_src_deps(project_dir: Path) -> set[Path]:
     Returns a set of absolute Paths to .lean files.
     """
     deps: set[Path] = set()
+    seen: set[Path] = set()
+    queue: deque[Path] = deque()
+
     for lean_file in sorted(project_dir.rglob("*.lean")):
-        if ".lake" in lean_file.parts:
+        if ".lake" not in lean_file.parts:
+            queue.append(lean_file.resolve())
+
+    while queue:
+        lean_file = queue.popleft()
+        if lean_file in seen:
             continue
+        seen.add(lean_file)
+
         result = subprocess.run(
             ["lake", "env", "lean", "--src-deps", str(lean_file)],
             cwd=project_dir,
@@ -211,7 +221,11 @@ def compute_src_deps(project_dir: Path) -> set[Path]:
             path = Path(line)
             if not path.is_absolute():
                 path = (project_dir / path).resolve()
+            if path in deps:
+                continue
             deps.add(path)
+            queue.append(path)
+
     return deps
 
 
