@@ -8,18 +8,56 @@ import json
 import shutil
 from pathlib import Path
 
-from import_closure import (
-    compute_src_deps,
-    find_module_build_artifacts,
-    get_lean_src_paths,
-    module_to_relpath,
-)
+from import_closure import compute_src_deps, find_module_build_artifacts, module_to_relpath
 
 
 def _copy_file(src: Path, dst: Path) -> None:
     """Copy a file, creating parent directories as needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def classify_dep_source(
+    src: Path,
+    project_dir: Path,
+    packages_dir: Path,
+    toolchain_lib: Path,
+) -> tuple[str, str | None] | None:
+    """Map a dependency source path to its module name and owning package.
+
+    Project sources are returned with `pkg_name=None` because they are copied
+    separately; package and toolchain sources include the package key used by
+    `copy_pruned_oleans`.
+    """
+    if src.suffix != ".lean":
+        return None
+
+    try:
+        rel = src.relative_to(packages_dir)
+    except ValueError:
+        rel = None
+    if rel and len(rel.parts) >= 2:
+        pkg_name = rel.parts[0]
+        mod = ".".join(Path(*rel.parts[1:]).with_suffix("").parts)
+        return mod, pkg_name
+
+    try:
+        rel = src.relative_to(toolchain_lib)
+    except ValueError:
+        rel = None
+    if rel and rel.parts:
+        mod = ".".join(rel.with_suffix("").parts)
+        return mod, "_toolchain"
+
+    try:
+        rel = src.relative_to(project_dir)
+    except ValueError:
+        rel = None
+    if rel and ".lake" not in rel.parts:
+        mod = ".".join(rel.with_suffix("").parts)
+        return mod, None
+
+    return None
 
 
 def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
@@ -261,57 +299,16 @@ def assemble_bundle(
     dep_sources = compute_src_deps(project_dir)
     print(f"  {len(dep_sources)} source files in transitive deps")
 
-    # Determine source roots from Lake's environment, preserving its order.
-    source_roots = get_lean_src_paths(project_dir)
-    if project_dir not in source_roots:
-        source_roots.insert(0, project_dir)
-    if toolchain_lib not in source_roots and toolchain_lib.is_dir():
-        source_roots.append(toolchain_lib)
-
     needed: set[str] = set()
     module_to_pkg: dict[str, str] = {}
     packages_dir = project_dir / ".lake" / "packages"
 
-    def _best_root(path: Path) -> Path | None:
-        best: Path | None = None
-        best_len = -1
-        for root in source_roots:
-            try:
-                path.relative_to(root)
-            except ValueError:
-                continue
-            root_len = len(root.parts)
-            if root_len > best_len:
-                best = root
-                best_len = root_len
-        return best
-
     for src in dep_sources:
-        root = _best_root(src)
-        if not root:
+        classified = classify_dep_source(src, project_dir, packages_dir, toolchain_lib)
+        if classified is None:
             continue
-        try:
-            rel = src.relative_to(root)
-        except ValueError:
-            continue
-        if rel.suffix != ".lean":
-            continue
-        mod = ".".join(rel.with_suffix("").parts)
+        mod, pkg_name = classified
         needed.add(mod)
-
-        pkg_name: str | None = None
-        try:
-            rel_to_packages = src.relative_to(packages_dir)
-            if rel_to_packages.parts:
-                pkg_name = rel_to_packages.parts[0]
-        except ValueError:
-            pass
-        if pkg_name is None and toolchain_lib.is_dir():
-            try:
-                src.relative_to(toolchain_lib)
-                pkg_name = "_toolchain"
-            except ValueError:
-                pass
         if pkg_name:
             module_to_pkg[mod] = pkg_name
 
