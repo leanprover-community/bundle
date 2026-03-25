@@ -1,52 +1,37 @@
 # Bundle Builder Roadmap
 
-## Current State
+## Not yet tested
 
-The bundle builder creates self-contained offline Lean 4 bundles for Windows,
-tested end-to-end in CI on a GitHub Actions Windows runner.
+- **Infoview panel rendering.** We verify the language server produces
+  diagnostics, but don't test that the infoview webview actually renders proof
+  state. Would require Playwright for Electron or WebdriverIO UI automation.
 
-## CI Test Coverage
+- **User interaction flow.** Clicking through files, typing in the editor,
+  seeing live feedback. Tests currently use the VS Code API programmatically.
 
-| Tier | What | Status |
-|------|------|--------|
-| 1 | Structural integrity (files, DLLs, path deps, settings, extension dir) | Done |
-| 2 | `lake build --no-build` (olean completeness via lake, offline) | Done |
-| 3 | LSP protocol test (language server responds to didOpen) | Done |
-| 4 | Launcher script (environment variables correct) | Done |
-| 5 | VSCodium integration smoke test (extension activation + diagnostics) | Done |
+- **First launch experience.** The launcher script sets the right environment,
+  but we don't test that double-clicking "Start Lean.cmd" actually opens
+  VSCodium in the correct folder.
 
-## Tier 5 Details
+- **Offline guarantee.** We don't run tests with network disabled. Lake could
+  theoretically try to fetch something we missed.
 
-Tier 5 uses `@vscode/test-electron` to launch VSCodium with the bundled
-extensions and run Mocha tests inside the extension host. The tests verify:
+- **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
 
-- **Extension activation**: lean4 extension is found and activates
-- **Language server**: starts and produces diagnostics for `#check Nat.add`
-- **Diagnostics correctness**: no error diagnostics in the fixture file
-- **Settings**: `extensions.autoUpdate`, `update.mode`, `telemetry.telemetryLevel`
-- **Environment**: PATH includes `lean/bin`, ELAN_HOME and LEAN_PATH are set
+- **Linux CI.** Linux bundles work (tested locally with xvfb) but aren't in CI.
 
-The tests run in CI on `windows-latest` and have also been validated on a
-local Windows 11 VM (Incus) with the same 10/10 pass rate.
+## Upstream changes that would simplify the bundle
 
-### Running the GUI tests locally
+- **Lake offline mode**
+  ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
+  Would let us stop rewriting `lake-manifest.json` to convert git deps to path
+  deps.
 
-```bash
-cd tests/gui
-npm ci && npx tsc
-BUNDLE_ROOT=/path/to/MDD154-bundle node out/run-tests.js
-```
+- **Extension git check suppression**
+  ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
+  Would let us drop MinGit (~46MB) from the bundle entirely.
 
-On Linux, use `xvfb-run` to provide a virtual display.
-
-## Future Work
-
-### Platform Support
-
-- Linux bundles (launcher script exists, needs CI testing)
-- macOS bundles (needs quarantine handling, `.app` bundle structure)
-
-### Bundle Size Optimization
+## Bundle size optimization
 
 - Investigate whether `.ir` files can be omitted (saves ~30% of olean size)
 - Investigate `.trace` file necessity
