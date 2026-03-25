@@ -1,0 +1,9 @@
+{
+  "name": "bundle-test-harness",
+  "displayName": "Bundle Test Harness",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "main": "./extension.js"
+}

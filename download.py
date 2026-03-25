@@ -269,11 +269,11 @@ def trim_lean_toolchain(lean_dir: Path, platform: str) -> None:
     # Remove LLVM/clang shared libraries and static libraries
     if lib_dir.is_dir():
         for f in list(lib_dir.iterdir()):
-            if f.is_file():
+            if f.is_file() or f.is_symlink():
                 name = f.name.lower()
                 if any(name.startswith(p) for p in ["libllvm", "libclang", "liblld"]):
                     f.unlink()
-                elif name.endswith(".a"):
+                elif f.is_file() and name.endswith(".a"):
                     f.unlink()
 
     # Remove static libraries under lib/lean/

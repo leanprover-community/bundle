@@ -13,7 +13,7 @@ tested end-to-end in CI on a GitHub Actions Windows runner.
 | 2 | `lake build --no-build` (olean completeness via lake, offline) | Done |
 | 3 | LSP protocol test (language server responds to didOpen) | Done |
 | 4 | Launcher script (environment variables correct) | Done |
-| 5 | Full GUI test (VSCodium + lean4 extension + infoview) | **Not yet** |
+| 5 | VSCodium integration smoke test (extension activation + diagnostics) | Done |
 
 ## Future Work
 

@@ -1,0 +1,18 @@
+{
+  "name": "bundle-gui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tier 5 VSCodium integration smoke tests for Lean 4 bundle",
+  "scripts": {
+    "build": "tsc",
+    "test": "node out/run-tests.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/test-electron": "^2.4.0",
+    "mocha": "^10.0.0",
+    "typescript": "^5.0.0"
+  }
+}
