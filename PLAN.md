@@ -15,37 +15,31 @@ tested end-to-end in CI on a GitHub Actions Windows runner.
 | 4 | Launcher script (environment variables correct) | Done |
 | 5 | VSCodium integration smoke test (extension activation + diagnostics) | Done |
 
+## Tier 5 Details
+
+Tier 5 uses `@vscode/test-electron` to launch VSCodium with the bundled
+extensions and run Mocha tests inside the extension host. The tests verify:
+
+- **Extension activation**: lean4 extension is found and activates
+- **Language server**: starts and produces diagnostics for `#check Nat.add`
+- **Diagnostics correctness**: no error diagnostics in the fixture file
+- **Settings**: `extensions.autoUpdate`, `update.mode`, `telemetry.telemetryLevel`
+- **Environment**: PATH includes `lean/bin`, ELAN_HOME and LEAN_PATH are set
+
+The tests run in CI on `windows-latest` and have also been validated on a
+local Windows 11 VM (Incus) with the same 10/10 pass rate.
+
+### Running the GUI tests locally
+
+```bash
+cd tests/gui
+npm ci && npx tsc
+BUNDLE_ROOT=/path/to/MDD154-bundle node out/run-tests.js
+```
+
+On Linux, use `xvfb-run` to provide a virtual display.
+
 ## Future Work
-
-### GUI Testing in CI
-
-The remaining untested surface is the actual VSCodium GUI experience: does
-the lean4 extension activate, does the infoview panel show proof state, do
-diagnostics appear in the editor.
-
-**Options** (in order of feasibility):
-
-1. **`@vscode/test-electron`** (~3h effort)
-   - Official VS Code testing framework
-   - Launches Electron, runs tests with access to VS Code API
-   - Can verify extension activation, language server status
-   - Works on Windows CI without special display setup
-   - Cannot easily test visual elements (infoview rendering)
-
-2. **WebdriverIO + `wdio-vscode-service`** (~6h effort)
-   - Full UI automation via Selenium/WebDriver
-   - Can click buttons, verify text in panels, simulate user flow
-   - Most comprehensive but most complex
-   - Good for "open file, wait for diagnostics, check infoview" flow
-
-3. **Playwright for Electron** (~4h effort)
-   - Modern alternative to WebdriverIO
-   - Can interact with Electron's Chromium layer
-   - Less VS Code-specific tooling than WebdriverIO
-
-**Recommendation**: Start with option 1 (`@vscode/test-electron`) as it's the
-simplest and covers the most important case (extension activates + server connects).
-Graduate to WebdriverIO only if we need to verify visual elements.
 
 ### Platform Support
 

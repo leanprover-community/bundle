@@ -16,6 +16,7 @@ This produces `MDD154-bundle-windows-x64.zip` containing:
 
 - **VSCodium** (portable mode) with the lean4 extension pre-installed
 - **Lean 4** toolchain (trimmed to essentials)
+- **MinGit** (minimal git for Windows, needed by the lean4 extension)
 - The **project source files**
 - **Only the oleans transitively needed** by the project (not all of Mathlib)
 
@@ -89,6 +90,20 @@ MDD154-bundle/
 5. Trims the Lean toolchain (removes clang, LLVM, ~500MB saved)
 6. Creates a launcher script that sets PATH, LEAN_PATH, ELAN_HOME
 7. Packages everything into a zip
+
+## Known issues
+
+- **MinGit is bundled as a workaround.** The lean4 VS Code extension checks
+  for git at startup and blocks the language server if it's missing. We bundle
+  MinGit (~46MB) to satisfy this check, even though the bundle doesn't need git
+  at runtime. This can be removed once the extension provides a way to suppress
+  the dependency check
+  ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
+
+- **Manifest rewriting.** We rewrite `lake-manifest.json` to convert git
+  dependencies to path dependencies so lake doesn't try to run git. This can be
+  removed once lake supports an offline mode
+  ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
 
 ## License
 
