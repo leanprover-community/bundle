@@ -151,14 +151,14 @@ class TestLauncherUnix:
 WINDOWS_PROBE = """\
 (
     echo [PATH]
-    echo %PATH%
+    echo !PATH!
     echo [ELAN_HOME]
-    echo %ELAN_HOME%
+    echo !ELAN_HOME!
     echo [LEAN_PATH]
-    echo %LEAN_PATH%
+    echo !LEAN_PATH!
     echo [LAUNCH_ARG]
-    echo %BUNDLE_ROOT%\\project
-) > "%BUNDLE_ROOT%\\_test_probe.txt"
+    echo !BUNDLE_ROOT!\\project
+) > "!BUNDLE_ROOT!\\_test_probe.txt"
 """
 
 
@@ -184,6 +184,10 @@ class TestLauncherWindows:
         _create_fake_bundle(tmp_path)
         patched = tmp_path / "start_lean_test.cmd"
         _patch_windows_launcher(TEMPLATES_DIR / "start_lean.cmd", patched)
+        clean_env = {
+            k: v for k, v in os.environ.items()
+            if k.upper() not in ("ELAN_HOME", "LEAN_PATH")
+        }
         r = subprocess.run(
             ["cmd", "/c", str(patched)],
             check=False,
@@ -191,6 +195,7 @@ class TestLauncherWindows:
             cwd=tmp_path,
             capture_output=True,
             text=True,
+            env=clean_env,
         )
         assert r.returncode == 0, (
             f"Launcher exited with {r.returncode}\n"
