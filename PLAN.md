@@ -2,8 +2,10 @@
 
 ## Not yet tested
 
-- **Offline guarantee.** We don't run tests with network disabled. Lake could
-  theoretically try to fetch something we missed.
+- **Offline guarantee.** ✅ `tests/test_offline.py` runs Lake and the LSP
+  server inside `unshare -rn` (Linux network namespace) to verify zero network
+  access. CI builds a Linux bundle and runs these tests with a preflight check
+  that fails (not skips) if namespace isolation is unavailable.
 
 - **Infoview panel rendering.** We verify the language server produces
   diagnostics, but don't test that the infoview webview actually renders proof
@@ -14,7 +16,8 @@
 
 - **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
 
-- **Linux CI.** Linux bundles work (tested locally with xvfb) but aren't in CI.
+- **Linux CI.** ✅ The `test-linux-offline` job builds a Linux bundle, verifies
+  its structure, and runs the offline guarantee tests.
 
 ## Upstream changes that would simplify the bundle
 
