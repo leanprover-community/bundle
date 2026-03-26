@@ -184,11 +184,19 @@ class TestLauncherWindows:
         _create_fake_bundle(tmp_path)
         patched = tmp_path / "start_lean_test.cmd"
         _patch_windows_launcher(TEMPLATES_DIR / "start_lean.cmd", patched)
-        subprocess.run(
+        r = subprocess.run(
             ["cmd", "/c", str(patched)],
-            check=True,
+            check=False,
             timeout=30,
             cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, (
+            f"Launcher exited with {r.returncode}\n"
+            f"stdout: {r.stdout[:2000]}\n"
+            f"stderr: {r.stderr[:2000]}\n"
+            f"script: {patched.read_text()[:2000]}"
         )
         return _parse_probe_output(tmp_path / "_test_probe.txt")
 
@@ -256,11 +264,18 @@ class TestBundleLauncherWindows:
         assert launcher, f"No .cmd launcher found in {BUNDLE_ROOT}"
         patched = tmp_path / "start_lean_test.cmd"
         _patch_windows_launcher(launcher, patched)
-        subprocess.run(
+        r = subprocess.run(
             ["cmd", "/c", str(patched)],
-            check=True,
+            check=False,
             timeout=30,
             cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, (
+            f"Bundle launcher exited with {r.returncode}\n"
+            f"stdout: {r.stdout[:2000]}\n"
+            f"stderr: {r.stderr[:2000]}"
         )
         return _parse_probe_output(tmp_path / "_test_probe.txt")
 
