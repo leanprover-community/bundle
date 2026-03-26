@@ -264,25 +264,38 @@ class TestBundleLauncherWindows:
     """Test the actual launcher installed in an extracted bundle."""
 
     @pytest.fixture()
-    def result(self, tmp_path: Path) -> dict[str, str]:
+    def result(self) -> dict[str, str]:
+        bundle_root = Path(BUNDLE_ROOT)
         launcher = _find_bundle_launcher(BUNDLE_ROOT, ".cmd")
         assert launcher, f"No .cmd launcher found in {BUNDLE_ROOT}"
-        patched = tmp_path / "start_lean_test.cmd"
-        _patch_windows_launcher(launcher, patched)
-        r = subprocess.run(
-            ["cmd", "/c", str(patched)],
-            check=False,
-            timeout=30,
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-        )
-        assert r.returncode == 0, (
-            f"Bundle launcher exited with {r.returncode}\n"
-            f"stdout: {r.stdout[:2000]}\n"
-            f"stderr: {r.stderr[:2000]}"
-        )
-        return _parse_probe_output(tmp_path / "_test_probe.txt")
+        # Place the patched script in the bundle root so %~dp0 resolves
+        # to the correct BUNDLE_ROOT (the script derives its root from
+        # its own location).
+        patched = bundle_root / "_test_launcher.cmd"
+        try:
+            _patch_windows_launcher(launcher, patched)
+            clean_env = {
+                k: v for k, v in os.environ.items()
+                if k.upper() not in ("ELAN_HOME", "LEAN_PATH")
+            }
+            r = subprocess.run(
+                ["cmd", "/c", str(patched)],
+                check=False,
+                timeout=30,
+                cwd=str(bundle_root),
+                capture_output=True,
+                text=True,
+                env=clean_env,
+            )
+            assert r.returncode == 0, (
+                f"Bundle launcher exited with {r.returncode}\n"
+                f"stdout: {r.stdout[:2000]}\n"
+                f"stderr: {r.stderr[:2000]}"
+            )
+            return _parse_probe_output(bundle_root / "_test_probe.txt")
+        finally:
+            patched.unlink(missing_ok=True)
+            (bundle_root / "_test_probe.txt").unlink(missing_ok=True)
 
     def test_path_contains_lean_bin(self, result: dict[str, str]) -> None:
         assert "\\lean\\bin" in result["PATH"]
