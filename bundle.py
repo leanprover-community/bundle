@@ -121,7 +121,7 @@ def main() -> None:
     parser.add_argument(
         "--ref",
         default=None,
-        help="Git ref to checkout (branch, tag, or commit)",
+        help="Git ref to checkout (branch or tag)",
     )
     parser.add_argument(
         "--vscodium-version",
@@ -219,6 +219,8 @@ def main() -> None:
             "extension_version": extension_version,
             "platform": args.platform,
             "repo_url": args.repo_url,
+            "ref": args.ref,
+            "include": args.include or None,
             "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         (bundle_dir / "bundle-manifest.json").write_text(

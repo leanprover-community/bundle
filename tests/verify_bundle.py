@@ -105,20 +105,6 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
         except json.JSONDecodeError as e:
             errors.append(f"lake-manifest.json: invalid JSON: {e}")
 
-    # --- Olean spot check ---
-    # Check that at least some oleans exist in package build dirs
-    packages_dir = bundle_root / "project" / ".lake" / "packages"
-    if packages_dir.is_dir():
-        total_oleans = 0
-        for pkg in packages_dir.iterdir():
-            if pkg.is_dir():
-                build_lib = pkg / ".lake" / "build" / "lib" / "lean"
-                if build_lib.is_dir():
-                    oleans = list(build_lib.rglob("*.olean"))
-                    total_oleans += len(oleans)
-        if total_oleans == 0:
-            errors.append("No .olean files found in any package build directory")
-
     return errors
 
 

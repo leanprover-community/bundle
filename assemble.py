@@ -93,6 +93,8 @@ def copy_project_files(
                 # Recursively copy only .lean files from subdirectories
                 for f in item.rglob("*.lean"):
                     rel = f.relative_to(project_dir)
+                    if any(part in _SKIP_DIRS for part in rel.parts):
+                        continue
                     _copy_file(f, bundle_project / rel)
 
     if extra_include:
@@ -105,7 +107,10 @@ def copy_project_files(
                 if match.is_file():
                     _copy_file(match, dst)
                 elif match.is_dir():
-                    shutil.copytree(match, dst, dirs_exist_ok=True)
+                    shutil.copytree(
+                        match, dst, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(*_SKIP_DIRS),
+                    )
 
 
 def copy_pruned_oleans(
