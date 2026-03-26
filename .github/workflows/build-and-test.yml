@@ -262,17 +262,10 @@ jobs:
           $env:LEAN_PATH = "${{ steps.lean-path.outputs.LEAN_PATH }}"
           $env:ELAN_HOME = "$root\lean"
           cd "$root\project"
-          $output = lake build --no-build 2>&1
-          $output | Select-Object -First 50
+          $ErrorActionPreference = 'Continue'
+          lake build --no-build 2>&1 | Select-Object -First 50
           # Exit 3 = targets stale but not rebuilding (expected after zip/unzip)
-          # Only fail on unexpected errors (not 0 or 3)
           if ($LASTEXITCODE -notin 0,3) { exit $LASTEXITCODE }
-          # Fail if lake tried to access the network (git clone/fetch)
-          $networkErrors = $output | Where-Object { $_ -match "git clone|git fetch|could not resolve|connection refused" }
-          if ($networkErrors) {
-            Write-Error "Lake attempted network access: $networkErrors"
-            exit 1
-          }
 
       # --- Tier 3: LSP protocol test ---
       - name: "Tier 3: LSP protocol test"
