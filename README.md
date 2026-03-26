@@ -105,6 +105,22 @@ MDD154-bundle/
   removed once lake supports an offline mode
   ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
 
+## Pinned versions
+
+Several component versions are hardcoded and need periodic bumps:
+
+| Component | Where | Notes |
+|-----------|-------|-------|
+| MinGit | `download.py` `MINGIT_VERSION` | Windows only |
+| even-better-toml extension | `download.py` `ALLOWED_EXTENSION_DEPS` | ID + version |
+| elan installer | `.github/workflows/build-and-test.yml` | Tag in curl URL |
+| GitHub Actions (checkout, setup-python, etc.) | `.github/workflows/build-and-test.yml` | Pinned by commit SHA |
+
+The **Lean toolchain** version comes from the target project's
+`lean-toolchain` file and is not pinned here. **VSCodium** and the **lean4
+extension** default to the latest release but can be pinned per-build via
+`--vscodium-version` and `--extension-version`.
+
 ## License
 
 Apache 2.0

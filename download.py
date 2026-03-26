@@ -45,8 +45,11 @@ _mingit_base, _mingit_rev = MINGIT_VERSION.rsplit(".", 1)
 MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{_mingit_base}.windows.{_mingit_rev}/MinGit-{MINGIT_VERSION}-64-bit.zip"
 
 # Extension dependencies expected from the lean4 extension's package.json.
-# Reject unexpected entries to prevent dependency injection via a compromised extension.
-ALLOWED_EXTENSION_DEPS = {"tamasfe.even-better-toml"}
+# Maps extension ID to pinned version. Reject unknown IDs and fetch only the
+# pinned version to prevent dependency injection via a compromised extension.
+ALLOWED_EXTENSION_DEPS = {
+    "tamasfe.even-better-toml": "0.21.2",
+}
 
 
 def _sha256_file(path: Path) -> str:
@@ -171,7 +174,15 @@ def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path
         with zipfile.ZipFile(archive_path) as zf:
             _safe_extract_zip(zf, lean_dir)
     elif archive_name.endswith(".tar.zst"):
-        # Use tar command which handles zstd
+        # Validate archive members before extracting (tar xf doesn't reject ..)
+        result = subprocess.run(
+            ["tar", "--list", "-f", str(archive_path)],
+            capture_output=True, text=True, check=True,
+        )
+        resolved_dest = lean_dir.resolve()
+        for member in result.stdout.splitlines():
+            if not (resolved_dest / member).resolve().is_relative_to(resolved_dest):
+                raise ValueError(f"Tar entry would extract outside {lean_dir}: {member!r}")
         subprocess.run(
             ["tar", "xf", str(archive_path), "-C", str(lean_dir)],
             check=True,
@@ -308,20 +319,22 @@ def download_lean4_extension(
 
     extension_dirs = [ext_dir]
 
-    # Download extension dependencies (only from allowlist)
+    # Download extension dependencies (only from allowlist, at pinned versions)
     pkg_path = ext_dir / "package.json"
     if pkg_path.is_file():
         pkg = json.loads(pkg_path.read_text())
         for dep_id in pkg.get("extensionDependencies", []):
-            if dep_id not in ALLOWED_EXTENSION_DEPS:
+            pinned_version = ALLOWED_EXTENSION_DEPS.get(dep_id)
+            if pinned_version is None:
                 raise ValueError(
                     f"Unexpected extension dependency {dep_id!r}. "
-                    f"Allowed: {ALLOWED_EXTENSION_DEPS}. "
                     f"Update ALLOWED_EXTENSION_DEPS in download.py if this is intentional."
                 )
             parts = dep_id.split(".", 1)
             if len(parts) == 2:
-                dep_dir = download_openvsx_extension(parts[0], parts[1], dest_dir)
+                dep_dir = download_openvsx_extension(
+                    parts[0], parts[1], dest_dir, version=pinned_version
+                )
                 extension_dirs.append(dep_dir)
 
     return extension_dirs
