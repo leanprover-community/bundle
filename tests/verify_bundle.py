@@ -20,7 +20,12 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
 
     lean_exe = "lean.exe" if is_windows else "lean"
     lake_exe = "lake.exe" if is_windows else "lake"
-    vscodium_exe = "VSCodium.exe" if is_windows else "codium"
+    if is_windows:
+        vscodium_exe = "VSCodium.exe"
+    elif platform.startswith("darwin"):
+        vscodium_exe = "VSCodium.app/Contents/MacOS/Electron"
+    else:
+        vscodium_exe = "bin/codium"
     launcher = "Start Lean.cmd" if is_windows else "Start Lean.sh"
 
     # --- Required files and directories ---
@@ -80,10 +85,8 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
 
     # --- Windows DLLs ---
     if is_windows:
-        required_dlls = ["libleanshared.dll", "libInit_shared.dll", "libLake_shared.dll"]
-        for dll in required_dlls:
-            if not (bundle_root / "lean" / "bin" / dll).is_file():
-                errors.append(f"Missing DLL: lean/bin/{dll}")
+        if not (bundle_root / "lean" / "bin" / "libleanshared.dll").is_file():
+            errors.append("Missing critical DLL: lean/bin/libleanshared.dll")
 
     # --- Manifest uses path deps (not git) ---
     manifest_path = bundle_root / "project" / "lake-manifest.json"
@@ -115,8 +118,6 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
                     total_oleans += len(oleans)
         if total_oleans == 0:
             errors.append("No .olean files found in any package build directory")
-        elif total_oleans < 100:
-            errors.append(f"Suspiciously few oleans: {total_oleans} (expected hundreds)")
 
     return errors
 

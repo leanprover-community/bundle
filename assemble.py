@@ -60,22 +60,52 @@ def classify_dep_source(
     return None
 
 
-def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
+_ALLOWLIST_FILES = {
+    "lakefile.toml", "lakefile.lean", "lakefile",
+    "lean-toolchain", "lake-manifest.json",
+}
+_ALLOWLIST_DIRS = {".vscode"}
+_SKIP_DIRS = {".lake", ".git", ".github", "lake-packages"}
+
+
+def copy_project_files(
+    project_dir: Path,
+    bundle_project: Path,
+    extra_include: list[str] | None = None,
+) -> None:
     """Copy the project's own source files into the bundle.
 
-    Copies .lean files, lakefile, lean-toolchain, lake-manifest.json,
-    and .vscode/ settings. Skips .lake/ and .git/.
+    Uses an allowlist: .lean files, lakefile configs, lean-toolchain,
+    lake-manifest.json, and .vscode/. Use extra_include for additional
+    glob patterns (e.g. ['*.json', 'data/'] for course data files).
     """
-    skip = {".lake", ".git", ".github", "lake-packages"}
-
     for item in sorted(project_dir.iterdir()):
-        if item.name in skip:
+        if item.name in _SKIP_DIRS:
             continue
         dst = bundle_project / item.name
         if item.is_file():
-            _copy_file(item, dst)
+            if item.name in _ALLOWLIST_FILES or item.suffix == ".lean":
+                _copy_file(item, dst)
         elif item.is_dir():
-            shutil.copytree(item, dst, dirs_exist_ok=True)
+            if item.name in _ALLOWLIST_DIRS:
+                shutil.copytree(item, dst, dirs_exist_ok=True)
+            else:
+                # Recursively copy only .lean files from subdirectories
+                for f in item.rglob("*.lean"):
+                    rel = f.relative_to(project_dir)
+                    _copy_file(f, bundle_project / rel)
+
+    if extra_include:
+        for pattern in extra_include:
+            for match in project_dir.glob(pattern):
+                rel = match.relative_to(project_dir)
+                if any(part in _SKIP_DIRS for part in rel.parts):
+                    continue
+                dst = bundle_project / rel
+                if match.is_file():
+                    _copy_file(match, dst)
+                elif match.is_dir():
+                    shutil.copytree(match, dst, dirs_exist_ok=True)
 
 
 def copy_pruned_oleans(
@@ -269,6 +299,7 @@ def assemble_bundle(
     templates_dir: Path,
     bundle_dir: Path,
     platform: str,
+    extra_include: list[str] | None = None,
 ) -> None:
     """Assemble the complete bundle directory.
 
@@ -301,7 +332,7 @@ def assemble_bundle(
 
     print("Copying project files...")
     bundle_project = bundle_dir / "project"
-    copy_project_files(project_dir, bundle_project)
+    copy_project_files(project_dir, bundle_project, extra_include=extra_include)
 
     print("Copying project oleans...")
     n_proj = copy_project_oleans(project_dir, bundle_project)

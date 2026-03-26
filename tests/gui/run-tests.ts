@@ -35,9 +35,12 @@ async function main() {
     // On Windows, the .exe is in the root. On Linux, use the bin/ wrapper script
     // which sets up the correct Electron environment.
     const isWindows = process.platform === 'win32';
+    const isMac = process.platform === 'darwin';
     const vscodiumExe = isWindows
         ? path.join(bundleRoot, 'vscodium', 'VSCodium.exe')
-        : path.join(bundleRoot, 'vscodium', 'bin', 'codium');
+        : isMac
+            ? path.join(bundleRoot, 'vscodium', 'VSCodium.app', 'Contents', 'MacOS', 'Electron')
+            : path.join(bundleRoot, 'vscodium', 'bin', 'codium');
 
     if (!fs.existsSync(vscodiumExe)) {
         console.error(`VSCodium not found at: ${vscodiumExe}`);

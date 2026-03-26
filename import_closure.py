@@ -40,6 +40,7 @@ def compute_src_deps(project_dir: Path) -> set[Path]:
             cwd=project_dir,
             capture_output=True,
             text=True,
+            timeout=60,
         )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()

@@ -51,7 +51,7 @@ class TestComputeSrcDeps:
                 self.stderr = ""
                 self.returncode = 0
 
-        def fake_run(cmd, cwd, capture_output, text):
+        def fake_run(cmd, cwd, capture_output, text, **kwargs):
             return FakeResult(outputs[str(Path(cmd[-1]).resolve())])
 
         monkeypatch.setattr("import_closure.subprocess.run", fake_run)

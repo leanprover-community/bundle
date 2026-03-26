@@ -14,7 +14,9 @@ This will:
 """
 
 import argparse
+import datetime
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -35,12 +37,13 @@ from download import (
 )
 
 
-def clone_project(repo_url: str, dest: Path) -> Path:
+def clone_project(repo_url: str, dest: Path, ref: str | None = None) -> Path:
     print(f"Cloning {repo_url}...")
-    subprocess.run(
-        ["git", "clone", "--depth=1", repo_url, str(dest)],
-        check=True,
-    )
+    cmd = ["git", "clone", "--depth=1"]
+    if ref:
+        cmd += ["--branch", ref]
+    cmd += [repo_url, str(dest)]
+    subprocess.run(cmd, check=True, timeout=300)
     return dest
 
 
@@ -52,6 +55,7 @@ def build_project(project_dir: Path) -> None:
         cwd=project_dir,
         capture_output=True,
         text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         print(f"  Warning: cache get returned {result.returncode}")
@@ -63,6 +67,7 @@ def build_project(project_dir: Path) -> None:
         ["lake", "build"],
         cwd=project_dir,
         check=True,
+        timeout=1800,
     )
 
 
@@ -114,6 +119,11 @@ def main() -> None:
         help="Use an already-cloned and built project directory instead of cloning",
     )
     parser.add_argument(
+        "--ref",
+        default=None,
+        help="Git ref to checkout (branch, tag, or commit)",
+    )
+    parser.add_argument(
         "--vscodium-version",
         default=None,
         help="VSCodium version to use (default: latest)",
@@ -122,6 +132,12 @@ def main() -> None:
         "--extension-version",
         default=None,
         help="lean4 VS Code extension version (default: latest)",
+    )
+    parser.add_argument(
+        "--include",
+        nargs="*",
+        default=[],
+        help="Additional file patterns to include from project (e.g. '*.json' 'data/')",
     )
     parser.add_argument(
         "--no-zip",
@@ -161,7 +177,7 @@ def main() -> None:
             project_dir = args.project_dir
             print(f"Using existing project at {project_dir}")
         else:
-            project_dir = clone_project(args.repo_url, work_dir / "project")
+            project_dir = clone_project(args.repo_url, work_dir / "project", ref=args.ref)
 
         lean_version = parse_toolchain(project_dir / "lean-toolchain")
         print(f"Lean version: {lean_version}")
@@ -171,8 +187,8 @@ def main() -> None:
         downloads_dir.mkdir(exist_ok=True)
 
         lean_dir = download_lean_toolchain(lean_version, args.platform, downloads_dir)
-        vscodium_dir = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
-        extension_dirs = download_lean4_extension(downloads_dir, args.extension_version)
+        vscodium_dir, vscodium_version = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
+        extension_dirs, extension_version = download_lean4_extension(downloads_dir, args.extension_version)
         mingit_dir = download_mingit(downloads_dir, args.platform)
 
         if not args.project_dir:
@@ -193,6 +209,20 @@ def main() -> None:
             templates_dir=templates_dir,
             bundle_dir=bundle_dir,
             platform=args.platform,
+            extra_include=args.include,
+        )
+
+        # Write bundle manifest for reproducibility
+        manifest = {
+            "lean_version": lean_version,
+            "vscodium_version": vscodium_version,
+            "extension_version": extension_version,
+            "platform": args.platform,
+            "repo_url": args.repo_url,
+            "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        (bundle_dir / "bundle-manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n"
         )
 
         if not args.no_zip:

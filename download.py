@@ -7,9 +7,12 @@ import hashlib
 import io
 import json
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -40,6 +43,7 @@ PLATFORM_MAP = {
 
 
 MINGIT_VERSION = "2.47.1.2"
+MINGIT_SHA256 = "5bafb35dfb249b89d726b37824eeb5022379f0e51f5fbf9c29f49bef57e85b42"
 # Git for Windows tags: vMAJOR.MINOR.PATCH.windows.REV
 _mingit_base, _mingit_rev = MINGIT_VERSION.rsplit(".", 1)
 MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{_mingit_base}.windows.{_mingit_rev}/MinGit-{MINGIT_VERSION}-64-bit.zip"
@@ -102,7 +106,13 @@ def download_mingit(dest_dir: Path, platform: str) -> Path | None:
     archive = dest_dir / f"MinGit-{MINGIT_VERSION}-64-bit.zip"
     print(f"  Downloading MinGit {MINGIT_VERSION}...")
     _download(MINGIT_URL, archive)
-    print(f"  SHA-256: {_sha256_file(archive)}")
+    actual = _sha256_file(archive)
+    print(f"  SHA-256: {actual}")
+    if actual != MINGIT_SHA256:
+        archive.unlink()
+        raise ValueError(
+            f"MinGit checksum mismatch: expected {MINGIT_SHA256}, got {actual}"
+        )
 
     print(f"  Extracting MinGit...")
     mingit_dir.mkdir(exist_ok=True)
@@ -124,28 +134,42 @@ def parse_toolchain(toolchain_file: Path) -> str:
     return content
 
 
-def _download(url: str, dest: Path) -> None:
-    print(f"  Downloading {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": "lean-bundle/1.0"})
-    with urllib.request.urlopen(req) as resp, open(dest, "wb") as f:
-        total = resp.headers.get("Content-Length")
-        downloaded = 0
-        while True:
-            chunk = resp.read(1024 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // int(total)
-                print(f"\r  {downloaded // (1024*1024)}MB / {int(total) // (1024*1024)}MB ({pct}%)", end="", flush=True)
-        if total:
-            print()
+def _download(url: str, dest: Path, retries: int = 3) -> None:
+    """Download a URL to a local file with retries on transient errors."""
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"  Downloading {url}")
+            req = urllib.request.Request(url, headers={"User-Agent": "lean-bundle/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as f:
+                total = resp.headers.get("Content-Length")
+                downloaded = 0
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = downloaded * 100 // int(total)
+                        print(f"\r  {downloaded // (1024*1024)}MB / {int(total) // (1024*1024)}MB ({pct}%)", end="", flush=True)
+                if total:
+                    print()
+            return
+        except (urllib.error.URLError, socket.timeout, ConnectionError) as e:
+            if isinstance(e, urllib.error.HTTPError) and e.code < 500:
+                raise  # don't retry client errors (4xx)
+            if dest.exists():
+                dest.unlink()
+            if attempt == retries:
+                raise
+            delay = 2 ** (attempt + 1)
+            print(f"  Retry {attempt}/{retries - 1} after {delay}s: {e}")
+            time.sleep(delay)
 
 
 def _download_bytes(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "lean-bundle/1.0"})
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read()
 
 
@@ -207,8 +231,11 @@ def _get_latest_vscodium_version() -> str:
     return data["tag_name"]
 
 
-def download_vscodium(platform: str, dest_dir: Path, version: str | None = None) -> Path:
-    """Download and extract VSCodium portable. Uses latest version if none specified."""
+def download_vscodium(platform: str, dest_dir: Path, version: str | None = None) -> tuple[Path, str]:
+    """Download and extract VSCodium portable. Uses latest version if none specified.
+
+    Returns (path_to_vscodium_dir, resolved_version).
+    """
     if version is None:
         version = _get_latest_vscodium_version()
         print(f"  Using VSCodium version: {version}")
@@ -233,7 +260,7 @@ def download_vscodium(platform: str, dest_dir: Path, version: str | None = None)
             _safe_extract_tar(tf, vscodium_dir)
 
     archive_path.unlink()
-    return vscodium_dir
+    return vscodium_dir, version
 
 
 def _get_latest_lean4_extension_version() -> str:
@@ -293,10 +320,10 @@ def download_openvsx_extension(
 
 def download_lean4_extension(
     dest_dir: Path, version: str | None = None
-) -> list[Path]:
+) -> tuple[list[Path], str]:
     """Download the lean4 extension and its dependencies.
 
-    Returns extension directories with lean4 first, then dependencies.
+    Returns (extension_dirs, resolved_version).
     """
     if version is None:
         version = _get_latest_lean4_extension_version()
@@ -337,7 +364,7 @@ def download_lean4_extension(
                 )
                 extension_dirs.append(dep_dir)
 
-    return extension_dirs
+    return extension_dirs, version
 
 
 def trim_lean_toolchain(lean_dir: Path, platform: str) -> None:
