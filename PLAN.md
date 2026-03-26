@@ -2,10 +2,6 @@
 
 ## Not yet tested
 
-- **First launch experience.** The launcher script sets the right environment,
-  but we don't test that double-clicking "Start Lean.cmd" actually opens
-  VSCodium in the correct folder.
-
 - **Offline guarantee.** We don't run tests with network disabled. Lake could
   theoretically try to fetch something we missed.
 

@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 suite('Extension Activation', () => {
@@ -28,5 +29,25 @@ suite('Settings', () => {
     test('telemetry.telemetryLevel is off', () => {
         const config = vscode.workspace.getConfiguration('telemetry');
         assert.strictEqual(config.get('telemetryLevel'), 'off');
+    });
+});
+
+suite('Workspace', () => {
+    test('workspace folder is the project directory', () => {
+        const folders = vscode.workspace.workspaceFolders;
+        assert.ok(folders && folders.length > 0, 'No workspace folders open');
+
+        const bundleRoot = process.env.BUNDLE_ROOT;
+        assert.ok(bundleRoot, 'BUNDLE_ROOT not set');
+
+        const expected = path.resolve(bundleRoot, 'project');
+        const actual = path.resolve(folders[0].uri.fsPath);
+
+        // Case-insensitive comparison for Windows
+        assert.strictEqual(
+            actual.toLowerCase(),
+            expected.toLowerCase(),
+            `Workspace folder is ${actual}, expected ${expected}`
+        );
     });
 });

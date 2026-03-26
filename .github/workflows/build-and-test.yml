@@ -152,53 +152,16 @@ jobs:
             echo "::warning::No .lean files found"
           }
 
-      # --- Tier 4: Launcher script environment test ---
-      - name: "Tier 4: Launcher environment test"
-        shell: cmd
+      # --- Tier 4: Launcher script integration test ---
+      - name: "Tier 4: Install pytest"
+        run: pip install pytest
+
+      - name: "Tier 4: Launcher script integration test"
+        shell: pwsh
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
         run: |
-          @echo off
-          setlocal EnableDelayedExpansion
-
-          set BUNDLE_ROOT=${{ steps.find-root.outputs.BUNDLE_ROOT }}
-
-          :: Simulate what Start Lean.cmd does (without launching VSCodium)
-          set PATH=%BUNDLE_ROOT%\lean\bin;%PATH%
-          set ELAN_HOME=%BUNDLE_ROOT%\lean
-          set LEAN_PATH=%BUNDLE_ROOT%\lean\lib\lean;%BUNDLE_ROOT%\project\.lake\build\lib\lean
-          for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
-              if exist "%%P\.lake\build\lib\lean" (
-                  set LEAN_PATH=!LEAN_PATH!;%%P\.lake\build\lib\lean
-              )
-          )
-
-          :: Verify environment
-          echo === Checking PATH ===
-          where lean.exe
-          if errorlevel 1 (
-              echo FAIL: lean.exe not found in PATH
-              exit /b 1
-          )
-
-          echo === Checking ELAN_HOME ===
-          echo ELAN_HOME=%ELAN_HOME%
-          if not exist "%ELAN_HOME%" (
-              echo FAIL: ELAN_HOME does not exist
-              exit /b 1
-          )
-
-          echo === Checking LEAN_PATH entries ===
-          set FAIL=0
-          for %%D in ("%LEAN_PATH:;=" "%") do (
-              if exist %%D (
-                  echo OK: %%D
-              ) else (
-                  echo FAIL: %%D does not exist
-                  set FAIL=1
-              )
-          )
-          if %FAIL%==1 exit /b 1
-
-          echo === All launcher environment checks passed ===
+          python -m pytest tests/test_launcher.py -v
 
       # --- Tier 5: VSCodium integration smoke test ---
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
