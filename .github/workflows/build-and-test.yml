@@ -174,6 +174,10 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
+      - name: Fix olean timestamps after unzip
+        run: |
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
         run: |
@@ -214,6 +218,11 @@ jobs:
           echo "BUNDLE_ROOT=$($root.FullName)" >> $env:GITHUB_OUTPUT
           echo "Bundle root: $($root.FullName)"
           Get-ChildItem $root.FullName
+
+      - name: Fix olean timestamps after unzip
+        shell: pwsh
+        run: |
+          Get-ChildItem "${{ steps.find-root.outputs.BUNDLE_ROOT }}" -Recurse -Include *.olean,*.ilean | ForEach-Object { $_.LastWriteTime = Get-Date }
 
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
