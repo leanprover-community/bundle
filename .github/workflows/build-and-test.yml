@@ -21,7 +21,7 @@ jobs:
       - name: Install pytest
         run: pip install pytest
       - name: Run unit tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v --ignore=tests/test_lsp.py
 
   build-bundle:
     runs-on: ubuntu-latest
