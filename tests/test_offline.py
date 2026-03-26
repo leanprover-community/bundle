@@ -152,7 +152,15 @@ def test_offline_actually_blocks_network() -> None:
 @skip_unless_offline
 @skip_unless_bundle
 def test_lake_no_build_offline() -> None:
-    """Lake must load the workspace without any network access."""
+    """Lake must load the workspace without network errors.
+
+    ``lake build --no-build`` may report targets as out-of-date (exit 3)
+    because Lake's trace-based freshness check sees different hashes after
+    copy/zip/unzip.  That's acceptable — it means "stale but not rebuilding",
+    not "tried to fetch and failed."
+
+    What we actually verify: no git/network errors in the output.
+    """
     root = _bundle_root()
     lake = root / "lean" / "bin" / "lake"
     assert lake.is_file(), f"lake not found: {lake}"
@@ -169,8 +177,24 @@ def test_lake_no_build_offline() -> None:
 
     stdout = r.stdout.decode("utf-8", errors="replace")
     stderr = r.stderr.decode("utf-8", errors="replace")
-    assert r.returncode == 0, (
-        f"lake build --no-build failed offline (rc={r.returncode})\n"
+    combined = stdout + stderr
+
+    # Network/git errors indicate the manifest rewrite missed something
+    network_errors = [
+        line for line in combined.splitlines()
+        if any(s in line.lower() for s in [
+            "network", "git clone", "git fetch", "repository not found",
+            "could not resolve host", "connection refused",
+        ])
+    ]
+    assert not network_errors, (
+        f"Lake attempted network access offline:\n"
+        + "\n".join(f"  {l}" for l in network_errors)
+    )
+
+    # Exit code 0 = all fresh, 3 = stale but not rebuilding.  Both are OK.
+    assert r.returncode in (0, 3), (
+        f"lake build --no-build failed unexpectedly (rc={r.returncode})\n"
         f"stdout: {stdout[:2000]}\n"
         f"stderr: {stderr[:2000]}"
     )
