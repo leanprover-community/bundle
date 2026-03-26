@@ -23,16 +23,13 @@ jobs:
       - name: Run unit tests
         run: pytest tests/ -v
 
-  build-bundle:
+  build-project:
     runs-on: ubuntu-latest
     needs: unit-tests
     env:
       REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
 
       - name: Install elan
         run: |
@@ -45,6 +42,38 @@ jobs:
           cd /tmp/project
           lake exe cache get || true
           lake build
+
+      - name: Archive built project
+        run: tar cf /tmp/project.tar -C /tmp project
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: built-project
+          path: /tmp/project.tar
+          retention-days: 1
+
+  build-windows:
+    runs-on: ubuntu-latest
+    needs: build-project
+    env:
+      REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-project
+
+      - name: Extract project
+        run: tar xf project.tar -C /tmp
+
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - name: Build Windows bundle
         run: |
@@ -59,19 +88,47 @@ jobs:
           ls -lh /tmp/bundle.zip
           du -sh /tmp/bundle-work/*/
 
-      - name: Build Linux bundle
-        run: |
-          python bundle.py "$REPO_URL" \
-            --project-dir /tmp/project \
-            --platform linux-x64 \
-            --work-dir /tmp/bundle-work-linux \
-            --output /tmp/bundle-linux.zip
-
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bundle-windows-x64
           path: /tmp/bundle.zip
           retention-days: 7
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: build-project
+    env:
+      REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-project
+
+      - name: Extract project
+        run: tar xf project.tar -C /tmp
+
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Build Linux bundle
+        run: |
+          python bundle.py "$REPO_URL" \
+            --project-dir /tmp/project \
+            --platform linux-x64 \
+            --work-dir /tmp/bundle-work \
+            --output /tmp/bundle-linux.zip
+
+      - name: Report bundle size
+        run: |
+          ls -lh /tmp/bundle-linux.zip
+          du -sh /tmp/bundle-work/*/
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -81,7 +138,7 @@ jobs:
 
   test-linux-offline:
     runs-on: ubuntu-latest
-    needs: build-bundle
+    needs: build-linux
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -127,7 +184,7 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
-    needs: build-bundle
+    needs: build-windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
