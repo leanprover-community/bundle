@@ -17,6 +17,22 @@ def _copy_file(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+def _touch_oleans(bundle_project: Path) -> None:
+    """Touch all olean/ilean files so they are newer than .lean sources.
+
+    Lake uses file modification times to decide whether a target is
+    out-of-date. After copying files into the bundle (and especially
+    after zip/unzip), timestamps can become equal or inverted, causing
+    ``lake build --no-build`` to report targets as out-of-date.
+    """
+    import os
+    # Set olean mtime to 1 second in the future to guarantee they're newer
+    future = time.time() + 1
+    for ext in ("*.olean", "*.ilean"):
+        for p in bundle_project.rglob(ext):
+            os.utime(p, (future, future))
+
+
 def classify_dep_source(
     src: Path,
     project_dir: Path,
@@ -467,6 +483,11 @@ def assemble_bundle(
 
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
+
+    # Ensure oleans are strictly newer than sources so Lake's timestamp
+    # check doesn't consider them out-of-date after copy/zip/unzip.
+    print("Fixing olean timestamps...")
+    _touch_oleans(bundle_project)
 
     print("Installing launcher...")
     if platform.startswith("windows"):
