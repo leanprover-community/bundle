@@ -2,19 +2,19 @@
 
 ## Not yet tested
 
-- **Infoview panel rendering.** We verify the language server produces
-  diagnostics, but don't test that the infoview webview actually renders proof
-  state. Would require Playwright for Electron or WebdriverIO UI automation.
-
-- **User interaction flow.** Clicking through files, typing in the editor,
-  seeing live feedback. Tests currently use the VS Code API programmatically.
-
 - **First launch experience.** The launcher script sets the right environment,
   but we don't test that double-clicking "Start Lean.cmd" actually opens
   VSCodium in the correct folder.
 
 - **Offline guarantee.** We don't run tests with network disabled. Lake could
   theoretically try to fetch something we missed.
+
+- **Infoview panel rendering.** We verify the language server produces
+  diagnostics, but don't test that the infoview webview actually renders proof
+  state. Would require Playwright for Electron or WebdriverIO UI automation.
+
+- **User interaction flow.** Clicking through files, typing in the editor,
+  seeing live feedback. Tests currently use the VS Code API programmatically.
 
 - **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
 

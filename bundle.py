@@ -14,6 +14,7 @@ This will:
 """
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -76,7 +77,10 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
                 zf.write(path, arcname)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
+    with open(output_path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
     print(f"Bundle created: {output_path} ({size_mb:.1f} MB)")
+    print(f"SHA-256: {digest}")
 
 
 def main() -> None:

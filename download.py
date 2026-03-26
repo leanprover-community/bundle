@@ -3,10 +3,12 @@
 Downloads the Lean toolchain, VSCodium portable, and lean4 VS Code extension.
 """
 
+import hashlib
 import io
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -40,6 +42,44 @@ PLATFORM_MAP = {
 MINGIT_VERSION = "2.47.1.2"
 MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{MINGIT_VERSION.replace('.2', '.windows.2')}/MinGit-{MINGIT_VERSION}-64-bit.zip"
 
+# Extension dependencies expected from the lean4 extension's package.json.
+# Reject unexpected entries to prevent dependency injection via a compromised extension.
+ALLOWED_EXTENSION_DEPS = {"tamasfe.even-better-toml"}
+
+
+def _sha256_file(path: Path) -> str:
+    """Compute the SHA-256 hex digest of a file."""
+    with open(path, "rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Extract a zip file, rejecting entries that would escape dest."""
+    dest = dest.resolve()
+    for info in zf.infolist():
+        if not (dest / info.filename).resolve().is_relative_to(dest):
+            raise ValueError(f"Zip entry would extract outside {dest}: {info.filename!r}")
+    zf.extractall(dest)
+
+
+def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
+    """Extract a tar file safely.
+
+    Uses the 'data' filter on Python 3.12+ which rejects absolute paths,
+    paths with .., and special file types. On 3.11, validates manually.
+    """
+    if sys.version_info >= (3, 12):
+        tf.extractall(dest, filter="data")
+        return
+    dest = dest.resolve()
+    for member in tf.getmembers():
+        if not (dest / member.name).resolve().is_relative_to(dest):
+            raise ValueError(f"Tar entry would extract outside {dest}: {member.name!r}")
+        if member.issym() or member.islnk():
+            if not (dest / member.linkname).resolve().is_relative_to(dest):
+                raise ValueError(f"Tar link points outside {dest}: {member.name!r}")
+    tf.extractall(dest)
+
 
 def download_mingit(dest_dir: Path, platform: str) -> Path | None:
     """Download MinGit for Windows. Returns None on non-Windows platforms.
@@ -57,11 +97,12 @@ def download_mingit(dest_dir: Path, platform: str) -> Path | None:
     archive = dest_dir / f"MinGit-{MINGIT_VERSION}-64-bit.zip"
     print(f"  Downloading MinGit {MINGIT_VERSION}...")
     _download(MINGIT_URL, archive)
+    print(f"  SHA-256: {_sha256_file(archive)}")
 
     print(f"  Extracting MinGit...")
     mingit_dir.mkdir(exist_ok=True)
     with zipfile.ZipFile(archive) as zf:
-        zf.extractall(mingit_dir)
+        _safe_extract_zip(zf, mingit_dir)
     archive.unlink()
 
     return mingit_dir
@@ -129,6 +170,7 @@ def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path
     archive_path = dest_dir / archive_name
 
     _download(url, archive_path)
+    print(f"  SHA-256: {_sha256_file(archive_path)}")
 
     print(f"  Extracting {archive_name}...")
     lean_dir = dest_dir / "lean-extract"
@@ -136,7 +178,7 @@ def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path
 
     if archive_name.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(lean_dir)
+            _safe_extract_zip(zf, lean_dir)
     elif archive_name.endswith(".tar.zst"):
         # Use tar command which handles zstd
         subprocess.run(
@@ -145,7 +187,7 @@ def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path
         )
     elif archive_name.endswith(".tar.gz"):
         with tarfile.open(archive_path) as tf:
-            tf.extractall(lean_dir)
+            _safe_extract_tar(tf, lean_dir)
 
     archive_path.unlink()
 
@@ -184,6 +226,7 @@ def download_vscodium(platform: str, dest_dir: Path, version: str | None = None)
 
     archive_path = dest_dir / asset_name
     _download(url, archive_path)
+    print(f"  SHA-256: {_sha256_file(archive_path)}")
 
     print(f"  Extracting {asset_name}...")
     vscodium_dir = dest_dir / "vscodium"
@@ -191,10 +234,10 @@ def download_vscodium(platform: str, dest_dir: Path, version: str | None = None)
 
     if plat["vscodium_extract"] == "zip":
         with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(vscodium_dir)
+            _safe_extract_zip(zf, vscodium_dir)
     else:
         with tarfile.open(archive_path) as tf:
-            tf.extractall(vscodium_dir)
+            _safe_extract_tar(tf, vscodium_dir)
 
     archive_path.unlink()
     return vscodium_dir
@@ -215,12 +258,18 @@ def _extract_vsix(vsix_path: Path, ext_dir: Path) -> None:
     so we extract extension/* to the root, discarding the VSIX metadata.
     """
     ext_dir.mkdir(exist_ok=True)
+    resolved_dest = ext_dir.resolve()
     with zipfile.ZipFile(vsix_path) as zf:
         prefix = "extension/"
         for info in zf.infolist():
             if info.filename.startswith(prefix):
                 info.filename = info.filename[len(prefix):]
                 if info.filename:
+                    target = (resolved_dest / info.filename).resolve()
+                    if not target.is_relative_to(resolved_dest):
+                        raise ValueError(
+                            f"VSIX entry would extract outside {ext_dir}: {info.filename!r}"
+                        )
                     zf.extract(info, ext_dir)
     vsix_path.unlink()
 
@@ -250,6 +299,7 @@ def download_openvsx_extension(
     vsix_url = f"https://open-vsx.org/api/{publisher}/{name}/{version}/file/{ext_id}-{version}.vsix"
     vsix_path = dest_dir / f"{ext_id}-{version}.vsix"
     _download(vsix_url, vsix_path)
+    print(f"  SHA-256: {_sha256_file(vsix_path)}")
 
     ext_dir = dest_dir / f"{ext_id}-{version}"
     print(f"  Extracting {ext_id}...")
@@ -284,6 +334,7 @@ def download_lean4_extension(
     except urllib.error.HTTPError:
         url = f"https://open-vsx.org/api/leanprover/lean4/{version}/file/leanprover.lean4-{version}.vsix"
         _download(url, vsix_path)
+    print(f"  SHA-256: {_sha256_file(vsix_path)}")
 
     ext_dir = dest_dir / f"leanprover.lean4-{version}"
     print(f"  Extracting lean4 extension...")
@@ -291,11 +342,17 @@ def download_lean4_extension(
 
     extension_dirs = [ext_dir]
 
-    # Download extension dependencies
+    # Download extension dependencies (only from allowlist)
     pkg_path = ext_dir / "package.json"
     if pkg_path.is_file():
         pkg = json.loads(pkg_path.read_text())
         for dep_id in pkg.get("extensionDependencies", []):
+            if dep_id not in ALLOWED_EXTENSION_DEPS:
+                raise ValueError(
+                    f"Unexpected extension dependency {dep_id!r}. "
+                    f"Allowed: {ALLOWED_EXTENSION_DEPS}. "
+                    f"Update ALLOWED_EXTENSION_DEPS in download.py if this is intentional."
+                )
             parts = dep_id.split(".", 1)
             if len(parts) == 2:
                 dep_dir = download_openvsx_extension(parts[0], parts[1], dest_dir)
