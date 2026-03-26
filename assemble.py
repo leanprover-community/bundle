@@ -200,15 +200,12 @@ def rewrite_manifest_to_path_deps(
     the local .lake/packages/ dirs, lake skips all git operations. This is
     a workaround until Lake supports an --offline flag
     (https://github.com/leanprover/lean4/issues/13101).
-
-    Lake's validateManifest only warns on source-kind mismatch, so this works.
     """
     manifest_path = bundle_project / "lake-manifest.json"
     if not manifest_path.is_file():
         return
 
     manifest = json.loads(manifest_path.read_text())
-    packages_dir = bundle_project / ".lake" / "packages"
 
     for pkg in manifest.get("packages", []):
         if pkg.get("type") == "git":
@@ -223,6 +220,85 @@ def rewrite_manifest_to_path_deps(
                 pkg.pop(key, None)
 
     manifest_path.write_text(json.dumps(manifest, indent=1) + "\n")
+
+
+def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
+    """Rewrite lakefile.toml git deps to path deps.
+
+    Lake validates that the lakefile and manifest agree on dependency
+    source kinds. If the manifest says path but the lakefile says git,
+    Lake considers targets out-of-date and ``--no-build`` fails.
+    """
+    lakefile = bundle_project / "lakefile.toml"
+    if not lakefile.is_file():
+        return
+
+    import tomllib
+    text = lakefile.read_text()
+    try:
+        data = tomllib.loads(text)
+    except Exception:
+        return
+
+    requires = data.get("require", [])
+    if not requires:
+        return
+
+    # For each git require, replace the git line with a path line
+    for req in requires:
+        name = req.get("name", "")
+        if "git" not in req:
+            continue
+        # Replace: git = "..." with path = ".lake/packages/<name>"
+        # Also remove rev = "..." if present
+        import re
+        # Match the [[require]] block for this name and replace git/rev lines
+        pattern = (
+            r'(\[\[require\]\]\s*\n'
+            r'name\s*=\s*"' + re.escape(name) + r'")\s*\n'
+            r'git\s*=\s*"[^"]*"'
+            r'(\s*\nrev\s*=\s*"[^"]*")?'
+        )
+        replacement = r'\1\npath = ".lake/packages/' + name + r'"'
+        text = re.sub(pattern, replacement, text)
+
+    lakefile.write_text(text)
+
+
+def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
+    """Rewrite lakefile.lean git deps to path deps.
+
+    Handles the Lean DSL syntax: ``require foo from git "url" @ "rev"``
+    → ``require foo from ".lake/packages/foo"``
+    """
+    lakefile = bundle_project / "lakefile.lean"
+    if not lakefile.is_file():
+        return
+
+    import re
+    text = lakefile.read_text()
+    # Match: require <name> from git "url" [@ "rev"]
+    pattern = r'(require\s+(\w+)\s+)from\s+git\s+"[^"]*"(\s*@\s*"[^"]*")?'
+
+    def replace_dep(m):
+        prefix = m.group(1)
+        name = m.group(2)
+        return f'{prefix}from ".lake/packages/{name}"'
+
+    new_text = re.sub(pattern, replace_dep, text)
+    if new_text != text:
+        lakefile.write_text(new_text)
+
+
+def rewrite_deps_to_path(bundle_project: Path) -> None:
+    """Rewrite all dependency references to path deps for offline use.
+
+    Rewrites both the manifest and the lakefile so Lake sees consistent
+    source kinds and doesn't consider targets out-of-date.
+    """
+    rewrite_manifest_to_path_deps(bundle_project)
+    _rewrite_lakefile_toml_deps(bundle_project)
+    _rewrite_lakefile_lean_deps(bundle_project)
 
 
 def setup_vscodium_portable(
@@ -389,8 +465,8 @@ def assemble_bundle(
     print("Copying package config files...")
     copy_package_configs(packages_dir, bundle_packages)
 
-    print("Rewriting manifest to path deps...")
-    rewrite_manifest_to_path_deps(bundle_project)
+    print("Rewriting deps to path deps...")
+    rewrite_deps_to_path(bundle_project)
 
     print("Installing launcher...")
     if platform.startswith("windows"):

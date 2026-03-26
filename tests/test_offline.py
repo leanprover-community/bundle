@@ -1,18 +1,23 @@
 """Offline guarantee tests.
 
-Runs Lake and the LSP server inside a Linux network namespace (via
-``unshare -rn``) to prove the bundle works with zero network access.
+Runs Lake and the LSP server inside a Linux network namespace to prove
+the bundle works with zero network access.
+
+Two isolation methods are tried, in order:
+1. ``unshare -rn`` — unprivileged, creates user+network namespace
+2. ``sudo unshare --net`` — requires passwordless sudo (GitHub Actions)
 
 Requires:
     - Linux (``unshare`` is Linux-only)
     - ``BUNDLE_ROOT`` environment variable pointing to an extracted bundle
-    - User namespace support (``unshare -rn`` without root)
+    - One of the above isolation methods
 
-In CI the preflight step should *fail* if ``unshare`` is unavailable rather
+In CI the preflight step should *fail* if neither method works rather
 than silently skipping.  The ``skipif`` markers here are for local dev only.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,25 +28,46 @@ import pytest
 BUNDLE_ROOT = os.environ.get("BUNDLE_ROOT")
 
 
-def _can_unshare() -> bool:
-    """Probe whether ``unshare -rn`` works on this machine."""
+def _detect_offline_cmd() -> list[str] | None:
+    """Find a working network isolation command prefix.
+
+    Returns the command prefix (e.g. ["unshare", "-rn", "--"]) or None.
+    """
     if sys.platform != "linux":
-        return False
+        return None
+
+    # Method 1: unprivileged user+network namespace
     try:
         r = subprocess.run(
             ["unshare", "-rn", "--", "true"],
             capture_output=True,
             timeout=5,
         )
-        return r.returncode == 0
+        if r.returncode == 0:
+            return ["unshare", "-rn", "--"]
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+        pass
+
+    # Method 2: sudo (passwordless) network namespace only
+    if shutil.which("sudo"):
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "unshare", "--net", "--", "true"],
+                capture_output=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                return ["sudo", "-n", "unshare", "--net", "--"]
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    return None
 
 
-CAN_UNSHARE = _can_unshare()
+OFFLINE_CMD = _detect_offline_cmd()
 
 skip_unless_offline = pytest.mark.skipif(
-    not CAN_UNSHARE, reason="unshare -rn not available"
+    not OFFLINE_CMD, reason="no network isolation available (tried unshare -rn, sudo unshare --net)"
 )
 skip_unless_bundle = pytest.mark.skipif(
     not BUNDLE_ROOT, reason="BUNDLE_ROOT not set"
@@ -88,9 +114,10 @@ def _clean_env(root: Path, tmp: str) -> dict[str, str]:
 
 
 def _run_offline(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """Run *cmd* with network disabled via ``unshare -rn``."""
+    """Run *cmd* with network disabled via the detected isolation method."""
+    assert OFFLINE_CMD, "no network isolation available"
     return subprocess.run(
-        ["unshare", "-rn", "--"] + cmd,
+        OFFLINE_CMD + cmd,
         **kwargs,
     )
 
