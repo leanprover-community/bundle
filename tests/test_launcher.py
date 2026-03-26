@@ -165,10 +165,12 @@ WINDOWS_PROBE = """\
 def _patch_windows_launcher(template: Path, output: Path) -> None:
     """Replace the VSCodium launch line with an environment probe."""
     text = template.read_text()
-    # Replace the "start ..." line at the end
+    # Replace the "start ..." line at the end.
+    # Use a lambda to avoid re.sub interpreting backslashes in the
+    # replacement string as group references (\p → bad escape).
     text = re.sub(
         r"^:: Launch VSCodium.*\nstart .*$",
-        WINDOWS_PROBE,
+        lambda _: WINDOWS_PROBE,
         text,
         flags=re.MULTILINE,
     )
