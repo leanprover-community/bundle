@@ -40,7 +40,9 @@ PLATFORM_MAP = {
 
 
 MINGIT_VERSION = "2.47.1.2"
-MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{MINGIT_VERSION.replace('.2', '.windows.2')}/MinGit-{MINGIT_VERSION}-64-bit.zip"
+# Git for Windows tags: vMAJOR.MINOR.PATCH.windows.REV
+_mingit_base, _mingit_rev = MINGIT_VERSION.rsplit(".", 1)
+MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{_mingit_base}.windows.{_mingit_rev}/MinGit-{MINGIT_VERSION}-64-bit.zip"
 
 # Extension dependencies expected from the lean4 extension's package.json.
 # Reject unexpected entries to prevent dependency injection via a compromised extension.
@@ -120,7 +122,6 @@ def parse_toolchain(toolchain_file: Path) -> str:
 
 
 def _download(url: str, dest: Path) -> None:
-    """Download a URL to a local file with progress indication."""
     print(f"  Downloading {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "lean-bundle/1.0"})
     with urllib.request.urlopen(req) as resp, open(dest, "wb") as f:
@@ -140,23 +141,13 @@ def _download(url: str, dest: Path) -> None:
 
 
 def _download_bytes(url: str) -> bytes:
-    """Download a URL and return its content as bytes."""
     req = urllib.request.Request(url, headers={"User-Agent": "lean-bundle/1.0"})
     with urllib.request.urlopen(req) as resp:
         return resp.read()
 
 
 def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path:
-    """Download and extract the Lean toolchain.
-
-    Args:
-        version: Lean version, e.g. "v4.26.0"
-        platform: Target platform key (e.g. "windows-x64")
-        dest_dir: Directory to extract into.
-
-    Returns:
-        Path to the extracted lean directory (containing bin/, lib/).
-    """
+    """Download, extract, and return the path to the Lean toolchain (containing bin/, lib/)."""
     plat = PLATFORM_MAP[platform]
     version_short = version.lstrip("v")
     lean_suffix = plat["lean_suffix"]
@@ -206,16 +197,7 @@ def _get_latest_vscodium_version() -> str:
 
 
 def download_vscodium(platform: str, dest_dir: Path, version: str | None = None) -> Path:
-    """Download and extract VSCodium portable.
-
-    Args:
-        platform: Target platform key.
-        dest_dir: Directory to extract into.
-        version: Optional VSCodium version; uses latest if None.
-
-    Returns:
-        Path to the extracted VSCodium directory.
-    """
+    """Download and extract VSCodium portable. Uses latest version if none specified."""
     if version is None:
         version = _get_latest_vscodium_version()
         print(f"  Using VSCodium version: {version}")
@@ -277,17 +259,7 @@ def _extract_vsix(vsix_path: Path, ext_dir: Path) -> None:
 def download_openvsx_extension(
     publisher: str, name: str, dest_dir: Path, version: str | None = None
 ) -> Path:
-    """Download a VS Code extension from Open VSX.
-
-    Args:
-        publisher: Extension publisher (e.g. "tamasfe").
-        name: Extension name (e.g. "even-better-toml").
-        dest_dir: Directory to extract into.
-        version: Optional version; uses latest if None.
-
-    Returns:
-        Path to the extracted extension directory.
-    """
+    """Download a VS Code extension from Open VSX. Uses latest version if none specified."""
     ext_id = f"{publisher}.{name}"
 
     if version is None:
@@ -311,15 +283,9 @@ def download_openvsx_extension(
 def download_lean4_extension(
     dest_dir: Path, version: str | None = None
 ) -> list[Path]:
-    """Download the lean4 VS Code extension and its dependencies.
+    """Download the lean4 extension and its dependencies.
 
-    Args:
-        dest_dir: Directory to extract extensions into.
-        version: Optional version string; uses latest if None.
-
-    Returns:
-        List of paths to extracted extension directories.
-        The lean4 extension is first, followed by its dependencies.
+    Returns extension directories with lean4 first, then dependencies.
     """
     if version is None:
         version = _get_latest_lean4_extension_version()

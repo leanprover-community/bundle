@@ -53,7 +53,7 @@ def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
     settings_template = tmp_path / "settings.json"
     settings_template.write_text("{}")
 
-    setup_vscodium_portable(vscodium_dir, extension_dir, settings_template)
+    setup_vscodium_portable(vscodium_dir, [extension_dir], settings_template)
 
     ext_dest = vscodium_dir / "data" / "extensions" / extension_dir.name
     assert (ext_dest / "package.json").is_file()

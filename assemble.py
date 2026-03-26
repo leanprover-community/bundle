@@ -13,7 +13,6 @@ from import_closure import compute_src_deps, find_module_build_artifacts, module
 
 
 def _copy_file(src: Path, dst: Path) -> None:
-    """Copy a file, creating parent directories as needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
 
@@ -86,18 +85,7 @@ def copy_pruned_oleans(
     bundle_packages_dir: Path,
     pkg_source_dirs: dict[str, Path],
 ) -> tuple[int, int]:
-    """Copy only the transitively needed oleans and sources into the bundle.
-
-    Args:
-        needed_modules: Set of module names from the transitive closure.
-        build_dirs: Map from package name -> build lib directory
-            (e.g. {"mathlib": Path(".lake/packages/mathlib/.lake/build/lib/lean")}).
-        bundle_packages_dir: Where to put packages in the bundle.
-        pkg_source_dirs: Map from package name -> source directory for .lean files.
-
-    Returns:
-        Tuple of (oleans_copied, sources_copied).
-    """
+    """Copy only the transitively needed oleans and sources into the bundle."""
     oleans_copied = 0
     sources_copied = 0
 

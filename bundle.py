@@ -36,7 +36,6 @@ from download import (
 
 
 def clone_project(repo_url: str, dest: Path) -> Path:
-    """Clone a project repository."""
     print(f"Cloning {repo_url}...")
     subprocess.run(
         ["git", "clone", "--depth=1", repo_url, str(dest)],
@@ -68,7 +67,6 @@ def build_project(project_dir: Path) -> None:
 
 
 def create_zip(bundle_dir: Path, output_path: Path) -> None:
-    """Create a zip file from the bundle directory."""
     print(f"Creating {output_path}...")
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(bundle_dir.rglob("*")):
@@ -133,7 +131,6 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Auto-detect platform
     if args.platform is None:
         import platform
         machine = platform.machine().lower()
@@ -147,10 +144,8 @@ def main() -> None:
         else:
             parser.error(f"Cannot auto-detect platform for {system}/{machine}. Use --platform.")
 
-    # Determine project name from URL
     project_name = args.repo_url.rstrip("/").split("/")[-1]
 
-    # Set up working directory
     temp_dir = None
     if args.work_dir:
         work_dir = args.work_dir
@@ -162,18 +157,15 @@ def main() -> None:
     try:
         templates_dir = Path(__file__).parent / "templates"
 
-        # Step 1: Clone or use existing project
         if args.project_dir:
             project_dir = args.project_dir
             print(f"Using existing project at {project_dir}")
         else:
             project_dir = clone_project(args.repo_url, work_dir / "project")
 
-        # Step 2: Read toolchain version
         lean_version = parse_toolchain(project_dir / "lean-toolchain")
         print(f"Lean version: {lean_version}")
 
-        # Step 3: Download components
         print("\n--- Downloading components ---")
         downloads_dir = work_dir / "downloads"
         downloads_dir.mkdir(exist_ok=True)
@@ -183,16 +175,13 @@ def main() -> None:
         extension_dirs = download_lean4_extension(downloads_dir, args.extension_version)
         mingit_dir = download_mingit(downloads_dir, args.platform)
 
-        # Step 4: Build project (if not pre-built)
         if not args.project_dir:
             print("\n--- Building project ---")
             build_project(project_dir)
 
-        # Step 5: Trim lean toolchain
         print("\n--- Trimming lean toolchain ---")
         trim_lean_toolchain(lean_dir, args.platform)
 
-        # Step 6: Assemble bundle
         print("\n--- Assembling bundle ---")
         bundle_dir = work_dir / f"{project_name}-bundle"
         assemble_bundle(
@@ -206,7 +195,6 @@ def main() -> None:
             platform=args.platform,
         )
 
-        # Step 7: Create zip
         if not args.no_zip:
             print("\n--- Creating zip ---")
             output = args.output or Path(f"{project_name}-bundle-{args.platform}.zip")

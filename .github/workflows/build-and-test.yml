@@ -21,7 +21,7 @@ jobs:
       - name: Install pytest
         run: pip install pytest
       - name: Run unit tests
-        run: pytest tests/test_import_closure.py -v
+        run: pytest tests/ -v
 
   build-bundle:
     runs-on: ubuntu-latest
