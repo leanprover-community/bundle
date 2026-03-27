@@ -1,58 +1,29 @@
 # Bundle Builder Roadmap
 
-## Current State
+## Not yet tested
 
-The bundle builder creates self-contained offline Lean 4 bundles for Windows,
-tested end-to-end in CI on a GitHub Actions Windows runner.
+- **Infoview panel rendering.** We verify the language server produces
+  diagnostics, but don't test that the infoview webview actually renders proof
+  state. Would require Playwright for Electron or WebdriverIO UI automation.
 
-## CI Test Coverage
+- **User interaction flow.** Clicking through files, typing in the editor,
+  seeing live feedback. Tests currently use the VS Code API programmatically.
 
-| Tier | What | Status |
-|------|------|--------|
-| 1 | Structural integrity (files, DLLs, path deps, settings, extension dir) | Done |
-| 2 | `lake build --no-build` (olean completeness via lake, offline) | Done |
-| 3 | LSP protocol test (language server responds to didOpen) | Done |
-| 4 | Launcher script (environment variables correct) | Done |
-| 5 | Full GUI test (VSCodium + lean4 extension + infoview) | **Not yet** |
+- **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
 
-## Future Work
+## Upstream changes that would simplify the bundle
 
-### GUI Testing in CI
+- **Lake offline mode**
+  ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
+  Would let us stop rewriting both `lake-manifest.json` and `lakefile.toml`/
+  `lakefile.lean` to convert git deps to path deps, and fix the trace hash
+  staleness that causes `lake build --no-build` to exit 3 after zip/unzip.
 
-The remaining untested surface is the actual VSCodium GUI experience: does
-the lean4 extension activate, does the infoview panel show proof state, do
-diagnostics appear in the editor.
+- **Extension git check suppression**
+  ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
+  Would let us drop MinGit (~46MB) from the bundle entirely.
 
-**Options** (in order of feasibility):
-
-1. **`@vscode/test-electron`** (~3h effort)
-   - Official VS Code testing framework
-   - Launches Electron, runs tests with access to VS Code API
-   - Can verify extension activation, language server status
-   - Works on Windows CI without special display setup
-   - Cannot easily test visual elements (infoview rendering)
-
-2. **WebdriverIO + `wdio-vscode-service`** (~6h effort)
-   - Full UI automation via Selenium/WebDriver
-   - Can click buttons, verify text in panels, simulate user flow
-   - Most comprehensive but most complex
-   - Good for "open file, wait for diagnostics, check infoview" flow
-
-3. **Playwright for Electron** (~4h effort)
-   - Modern alternative to WebdriverIO
-   - Can interact with Electron's Chromium layer
-   - Less VS Code-specific tooling than WebdriverIO
-
-**Recommendation**: Start with option 1 (`@vscode/test-electron`) as it's the
-simplest and covers the most important case (extension activates + server connects).
-Graduate to WebdriverIO only if we need to verify visual elements.
-
-### Platform Support
-
-- Linux bundles (launcher script exists, needs CI testing)
-- macOS bundles (needs quarantine handling, `.app` bundle structure)
-
-### Bundle Size Optimization
+## Bundle size optimization
 
 - Investigate whether `.ir` files can be omitted (saves ~30% of olean size)
 - Investigate `.trace` file necessity

@@ -5,8 +5,8 @@ setlocal EnableDelayedExpansion
 set BUNDLE_ROOT=%~dp0
 set BUNDLE_ROOT=%BUNDLE_ROOT:~0,-1%
 
-:: Add lean to PATH
-set PATH=%BUNDLE_ROOT%\lean\bin;%PATH%
+:: Add lean and git to PATH
+set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%PATH%
 
 :: Prevent elan from interfering
 set ELAN_HOME=%BUNDLE_ROOT%\lean

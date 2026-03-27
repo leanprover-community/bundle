@@ -24,5 +24,5 @@ if [ -d "$BUNDLE_ROOT/vscodium/VSCodium.app" ]; then
     open "$BUNDLE_ROOT/vscodium/VSCodium.app" --args "$BUNDLE_ROOT/project"
 else
     # Linux
-    "$BUNDLE_ROOT/vscodium/codium" "$BUNDLE_ROOT/project"
+    "$BUNDLE_ROOT/vscodium/bin/codium" "$BUNDLE_ROOT/project"
 fi

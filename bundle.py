@@ -14,6 +14,9 @@ This will:
 """
 
 import argparse
+import datetime
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -27,19 +30,20 @@ from download import (
     PLATFORM_MAP,
     download_lean4_extension,
     download_lean_toolchain,
+    download_mingit,
     download_vscodium,
     parse_toolchain,
     trim_lean_toolchain,
 )
 
 
-def clone_project(repo_url: str, dest: Path) -> Path:
-    """Clone a project repository."""
+def clone_project(repo_url: str, dest: Path, ref: str | None = None) -> Path:
     print(f"Cloning {repo_url}...")
-    subprocess.run(
-        ["git", "clone", "--depth=1", repo_url, str(dest)],
-        check=True,
-    )
+    cmd = ["git", "clone", "--depth=1"]
+    if ref:
+        cmd += ["--branch", ref]
+    cmd += [repo_url, str(dest)]
+    subprocess.run(cmd, check=True, timeout=300)
     return dest
 
 
@@ -51,6 +55,7 @@ def build_project(project_dir: Path) -> None:
         cwd=project_dir,
         capture_output=True,
         text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         print(f"  Warning: cache get returned {result.returncode}")
@@ -62,11 +67,11 @@ def build_project(project_dir: Path) -> None:
         ["lake", "build"],
         cwd=project_dir,
         check=True,
+        timeout=1800,
     )
 
 
 def create_zip(bundle_dir: Path, output_path: Path) -> None:
-    """Create a zip file from the bundle directory."""
     print(f"Creating {output_path}...")
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(bundle_dir.rglob("*")):
@@ -75,7 +80,10 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
                 zf.write(path, arcname)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
+    with open(output_path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
     print(f"Bundle created: {output_path} ({size_mb:.1f} MB)")
+    print(f"SHA-256: {digest}")
 
 
 def main() -> None:
@@ -111,6 +119,11 @@ def main() -> None:
         help="Use an already-cloned and built project directory instead of cloning",
     )
     parser.add_argument(
+        "--ref",
+        default=None,
+        help="Git ref to checkout (branch or tag)",
+    )
+    parser.add_argument(
         "--vscodium-version",
         default=None,
         help="VSCodium version to use (default: latest)",
@@ -121,6 +134,12 @@ def main() -> None:
         help="lean4 VS Code extension version (default: latest)",
     )
     parser.add_argument(
+        "--include",
+        nargs="*",
+        default=[],
+        help="Additional file patterns to include from project (e.g. '*.json' 'data/')",
+    )
+    parser.add_argument(
         "--no-zip",
         action="store_true",
         help="Skip zip creation, just assemble the bundle directory",
@@ -128,7 +147,6 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Auto-detect platform
     if args.platform is None:
         import platform
         machine = platform.machine().lower()
@@ -142,10 +160,8 @@ def main() -> None:
         else:
             parser.error(f"Cannot auto-detect platform for {system}/{machine}. Use --platform.")
 
-    # Determine project name from URL
     project_name = args.repo_url.rstrip("/").split("/")[-1]
 
-    # Set up working directory
     temp_dir = None
     if args.work_dir:
         work_dir = args.work_dir
@@ -157,49 +173,60 @@ def main() -> None:
     try:
         templates_dir = Path(__file__).parent / "templates"
 
-        # Step 1: Clone or use existing project
         if args.project_dir:
             project_dir = args.project_dir
             print(f"Using existing project at {project_dir}")
         else:
-            project_dir = clone_project(args.repo_url, work_dir / "project")
+            project_dir = clone_project(args.repo_url, work_dir / "project", ref=args.ref)
 
-        # Step 2: Read toolchain version
         lean_version = parse_toolchain(project_dir / "lean-toolchain")
         print(f"Lean version: {lean_version}")
 
-        # Step 3: Download components
         print("\n--- Downloading components ---")
         downloads_dir = work_dir / "downloads"
         downloads_dir.mkdir(exist_ok=True)
 
         lean_dir = download_lean_toolchain(lean_version, args.platform, downloads_dir)
-        vscodium_dir = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
-        extension_dir = download_lean4_extension(downloads_dir, args.extension_version)
+        vscodium_dir, vscodium_version = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
+        extension_dirs, extension_version = download_lean4_extension(downloads_dir, args.extension_version)
+        mingit_dir = download_mingit(downloads_dir, args.platform)
 
-        # Step 4: Build project (if not pre-built)
         if not args.project_dir:
             print("\n--- Building project ---")
             build_project(project_dir)
 
-        # Step 5: Trim lean toolchain
         print("\n--- Trimming lean toolchain ---")
         trim_lean_toolchain(lean_dir, args.platform)
 
-        # Step 6: Assemble bundle
         print("\n--- Assembling bundle ---")
         bundle_dir = work_dir / f"{project_name}-bundle"
         assemble_bundle(
             project_dir=project_dir,
             lean_dir=lean_dir,
             vscodium_dir=vscodium_dir,
-            extension_dir=extension_dir,
+            extension_dirs=extension_dirs,
+            mingit_dir=mingit_dir,
             templates_dir=templates_dir,
             bundle_dir=bundle_dir,
             platform=args.platform,
+            extra_include=args.include,
         )
 
-        # Step 7: Create zip
+        # Write bundle manifest for reproducibility
+        manifest = {
+            "lean_version": lean_version,
+            "vscodium_version": vscodium_version,
+            "extension_version": extension_version,
+            "platform": args.platform,
+            "repo_url": args.repo_url,
+            "ref": args.ref,
+            "include": args.include or None,
+            "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        (bundle_dir / "bundle-manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n"
+        )
+
         if not args.no_zip:
             print("\n--- Creating zip ---")
             output = args.output or Path(f"{project_name}-bundle-{args.platform}.zip")

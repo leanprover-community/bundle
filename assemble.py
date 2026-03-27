@@ -6,15 +6,31 @@ into the final bundle layout.
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 from import_closure import compute_src_deps, find_module_build_artifacts, module_to_relpath
 
 
 def _copy_file(src: Path, dst: Path) -> None:
-    """Copy a file, creating parent directories as needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def _touch_oleans(bundle_project: Path) -> None:
+    """Touch all olean/ilean files so they are newer than .lean sources.
+
+    Lake uses file modification times to decide whether a target is
+    out-of-date. After copying files into the bundle (and especially
+    after zip/unzip), timestamps can become equal or inverted, causing
+    ``lake build --no-build`` to report targets as out-of-date.
+    """
+    import os
+    # Set olean mtime to 1 second in the future to guarantee they're newer
+    future = time.time() + 1
+    for ext in ("*.olean", "*.ilean"):
+        for p in bundle_project.rglob(ext):
+            os.utime(p, (future, future))
 
 
 def classify_dep_source(
@@ -60,22 +76,57 @@ def classify_dep_source(
     return None
 
 
-def copy_project_files(project_dir: Path, bundle_project: Path) -> None:
+_ALLOWLIST_FILES = {
+    "lakefile.toml", "lakefile.lean", "lakefile",
+    "lean-toolchain", "lake-manifest.json",
+}
+_ALLOWLIST_DIRS = {".vscode"}
+_SKIP_DIRS = {".lake", ".git", ".github", "lake-packages"}
+
+
+def copy_project_files(
+    project_dir: Path,
+    bundle_project: Path,
+    extra_include: list[str] | None = None,
+) -> None:
     """Copy the project's own source files into the bundle.
 
-    Copies .lean files, lakefile, lean-toolchain, lake-manifest.json,
-    and .vscode/ settings. Skips .lake/ and .git/.
+    Uses an allowlist: .lean files, lakefile configs, lean-toolchain,
+    lake-manifest.json, and .vscode/. Use extra_include for additional
+    glob patterns (e.g. ['*.json', 'data/'] for course data files).
     """
-    skip = {".lake", ".git", ".github", "lake-packages"}
-
     for item in sorted(project_dir.iterdir()):
-        if item.name in skip:
+        if item.name in _SKIP_DIRS:
             continue
         dst = bundle_project / item.name
         if item.is_file():
-            _copy_file(item, dst)
+            if item.name in _ALLOWLIST_FILES or item.suffix == ".lean":
+                _copy_file(item, dst)
         elif item.is_dir():
-            shutil.copytree(item, dst, dirs_exist_ok=True)
+            if item.name in _ALLOWLIST_DIRS:
+                shutil.copytree(item, dst, dirs_exist_ok=True)
+            else:
+                # Recursively copy only .lean files from subdirectories
+                for f in item.rglob("*.lean"):
+                    rel = f.relative_to(project_dir)
+                    if any(part in _SKIP_DIRS for part in rel.parts):
+                        continue
+                    _copy_file(f, bundle_project / rel)
+
+    if extra_include:
+        for pattern in extra_include:
+            for match in project_dir.glob(pattern):
+                rel = match.relative_to(project_dir)
+                if any(part in _SKIP_DIRS for part in rel.parts):
+                    continue
+                dst = bundle_project / rel
+                if match.is_file():
+                    _copy_file(match, dst)
+                elif match.is_dir():
+                    shutil.copytree(
+                        match, dst, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(*_SKIP_DIRS),
+                    )
 
 
 def copy_pruned_oleans(
@@ -85,18 +136,7 @@ def copy_pruned_oleans(
     bundle_packages_dir: Path,
     pkg_source_dirs: dict[str, Path],
 ) -> tuple[int, int]:
-    """Copy only the transitively needed oleans and sources into the bundle.
-
-    Args:
-        needed_modules: Set of module names from the transitive closure.
-        build_dirs: Map from package name -> build lib directory
-            (e.g. {"mathlib": Path(".lake/packages/mathlib/.lake/build/lib/lean")}).
-        bundle_packages_dir: Where to put packages in the bundle.
-        pkg_source_dirs: Map from package name -> source directory for .lean files.
-
-    Returns:
-        Tuple of (oleans_copied, sources_copied).
-    """
+    """Copy only the transitively needed oleans and sources into the bundle."""
     oleans_copied = 0
     sources_copied = 0
 
@@ -176,15 +216,12 @@ def rewrite_manifest_to_path_deps(
     the local .lake/packages/ dirs, lake skips all git operations. This is
     a workaround until Lake supports an --offline flag
     (https://github.com/leanprover/lean4/issues/13101).
-
-    Lake's validateManifest only warns on source-kind mismatch, so this works.
     """
     manifest_path = bundle_project / "lake-manifest.json"
     if not manifest_path.is_file():
         return
 
     manifest = json.loads(manifest_path.read_text())
-    packages_dir = bundle_project / ".lake" / "packages"
 
     for pkg in manifest.get("packages", []):
         if pkg.get("type") == "git":
@@ -201,56 +238,147 @@ def rewrite_manifest_to_path_deps(
     manifest_path.write_text(json.dumps(manifest, indent=1) + "\n")
 
 
+def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
+    """Rewrite lakefile.toml git deps to path deps.
+
+    Lake validates that the lakefile and manifest agree on dependency
+    source kinds. If the manifest says path but the lakefile says git,
+    Lake considers targets out-of-date and ``--no-build`` fails.
+    """
+    lakefile = bundle_project / "lakefile.toml"
+    if not lakefile.is_file():
+        return
+
+    import tomllib
+    text = lakefile.read_text()
+    try:
+        data = tomllib.loads(text)
+    except Exception:
+        return
+
+    requires = data.get("require", [])
+    if not requires:
+        return
+
+    # For each git require, replace the git line with a path line
+    for req in requires:
+        name = req.get("name", "")
+        if "git" not in req:
+            continue
+        # Replace: git = "..." with path = ".lake/packages/<name>"
+        # Also remove rev = "..." if present
+        import re
+        # Match the [[require]] block for this name and replace git/rev lines
+        pattern = (
+            r'(\[\[require\]\]\s*\n'
+            r'name\s*=\s*"' + re.escape(name) + r'")\s*\n'
+            r'git\s*=\s*"[^"]*"'
+            r'(\s*\nrev\s*=\s*"[^"]*")?'
+        )
+        replacement = r'\1\npath = ".lake/packages/' + name + r'"'
+        text = re.sub(pattern, replacement, text)
+
+    lakefile.write_text(text)
+
+
+def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
+    """Rewrite lakefile.lean git deps to path deps.
+
+    Handles the Lean DSL syntax: ``require foo from git "url" @ "rev"``
+    → ``require foo from ".lake/packages/foo"``
+    """
+    lakefile = bundle_project / "lakefile.lean"
+    if not lakefile.is_file():
+        return
+
+    import re
+    text = lakefile.read_text()
+    # Match: require <name> from git "url" [@ "rev"]
+    pattern = r'(require\s+(\w+)\s+)from\s+git\s+"[^"]*"(\s*@\s*"[^"]*")?'
+
+    def replace_dep(m):
+        prefix = m.group(1)
+        name = m.group(2)
+        return f'{prefix}from ".lake/packages/{name}"'
+
+    new_text = re.sub(pattern, replace_dep, text)
+    if new_text != text:
+        lakefile.write_text(new_text)
+
+
+def rewrite_deps_to_path(bundle_project: Path) -> None:
+    """Rewrite all dependency references to path deps for offline use.
+
+    Rewrites both the manifest and the lakefile so Lake sees consistent
+    source kinds and doesn't consider targets out-of-date.
+    """
+    rewrite_manifest_to_path_deps(bundle_project)
+    _rewrite_lakefile_toml_deps(bundle_project)
+    _rewrite_lakefile_lean_deps(bundle_project)
+
+
 def setup_vscodium_portable(
     vscodium_dir: Path,
-    extension_dir: Path,
+    extension_dirs: list[Path],
     settings_template: Path,
 ) -> None:
-    """Set up VSCodium in portable mode with the lean4 extension pre-installed.
+    """Set up VSCodium in portable mode with extensions pre-installed.
 
     Args:
         vscodium_dir: Path to extracted VSCodium.
-        extension_dir: Path to extracted lean4 extension.
+        extension_dirs: Paths to extracted extensions (lean4 + dependencies).
         settings_template: Path to settings.json template.
     """
     # Create portable data directory
     data_dir = vscodium_dir / "data"
     data_dir.mkdir(exist_ok=True)
-
-    # VSIX archives often contain their actual extension payload under
-    # `extension/`; VSCodium expects package.json at the extension root.
-    extension_root = extension_dir / "extension"
-    if not extension_root.is_dir():
-        extension_root = extension_dir
-
-    # Install extension
     extensions_dir = data_dir / "extensions"
-    ext_dest = extensions_dir / extension_dir.name
-    if ext_dest.exists():
-        shutil.rmtree(ext_dest)
-    shutil.copytree(extension_root, ext_dest)
 
-    # Read extension metadata for the registry
-    ext_package = ext_dest / "package.json"
-    ext_id = extension_dir.name  # e.g. "leanprover.lean4-0.0.225"
-    ext_version = "0.0.0"
-    ext_publisher = "leanprover"
-    ext_name = "lean4"
-    if ext_package.is_file():
-        pkg = json.loads(ext_package.read_text())
-        ext_version = pkg.get("version", ext_version)
-        ext_publisher = pkg.get("publisher", ext_publisher)
-        ext_name = pkg.get("name", ext_name)
+    registry = []
 
-    # Write extensions.json registry so --list-extensions works
-    registry = [
-        {
-            "identifier": {"id": f"{ext_publisher}.{ext_name}"},
-            "version": ext_version,
-            "relativeLocation": extension_dir.name,
-            "metadata": {},
-        }
-    ]
+    for extension_dir in extension_dirs:
+        # VSIX archives often contain their actual extension payload under
+        # `extension/`; VSCodium expects package.json at the extension root.
+        extension_root = extension_dir / "extension"
+        if not extension_root.is_dir():
+            extension_root = extension_dir
+
+        # Install extension
+        ext_dest = extensions_dir / extension_dir.name
+        if ext_dest.exists():
+            shutil.rmtree(ext_dest)
+        shutil.copytree(extension_root, ext_dest)
+
+        # Read extension metadata for the registry
+        ext_package = ext_dest / "package.json"
+        ext_version = "0.0.0"
+        ext_publisher = "unknown"
+        ext_name = extension_dir.name
+        if ext_package.is_file():
+            pkg = json.loads(ext_package.read_text())
+            ext_version = pkg.get("version", ext_version)
+            ext_publisher = pkg.get("publisher", ext_publisher)
+            ext_name = pkg.get("name", ext_name)
+
+        # Write extensions.json registry entry.
+        # The location field with $mid is VS Code's internal URI format;
+        # without it, VSCodium can't resolve the extension path.
+        registry.append(
+            {
+                "identifier": {"id": f"{ext_publisher}.{ext_name}"},
+                "version": ext_version,
+                "location": {
+                    "$mid": 1,
+                    "path": f"/{extension_dir.name}",
+                    "scheme": "file",
+                },
+                "relativeLocation": extension_dir.name,
+                "metadata": {
+                    "installedTimestamp": int(time.time() * 1000),
+                },
+            }
+        )
+
     (extensions_dir / "extensions.json").write_text(json.dumps(registry, indent=2) + "\n")
 
     # Create user settings
@@ -263,10 +391,12 @@ def assemble_bundle(
     project_dir: Path,
     lean_dir: Path,
     vscodium_dir: Path,
-    extension_dir: Path,
+    extension_dirs: list[Path],
+    mingit_dir: Path | None,
     templates_dir: Path,
     bundle_dir: Path,
     platform: str,
+    extra_include: list[str] | None = None,
 ) -> None:
     """Assemble the complete bundle directory.
 
@@ -274,7 +404,8 @@ def assemble_bundle(
         project_dir: The built project directory (with .lake/packages/ and oleans).
         lean_dir: Extracted and trimmed lean toolchain directory.
         vscodium_dir: Extracted VSCodium directory.
-        extension_dir: Extracted lean4 extension directory.
+        extension_dirs: Extracted extension directories (lean4 + dependencies).
+        mingit_dir: Extracted MinGit directory (Windows only, None on other platforms).
         templates_dir: Directory containing launcher and settings templates.
         bundle_dir: Output bundle directory to create.
         platform: Target platform key.
@@ -284,17 +415,21 @@ def assemble_bundle(
     print("Copying lean toolchain...")
     shutil.copytree(lean_dir, bundle_dir / "lean", dirs_exist_ok=True)
 
+    if mingit_dir is not None:
+        print("Copying MinGit...")
+        shutil.copytree(mingit_dir, bundle_dir / "git", dirs_exist_ok=True)
+
     print("Setting up VSCodium...")
     shutil.copytree(vscodium_dir, bundle_dir / "vscodium", dirs_exist_ok=True)
     setup_vscodium_portable(
         bundle_dir / "vscodium",
-        extension_dir,
+        extension_dirs,
         templates_dir / "settings.json",
     )
 
     print("Copying project files...")
     bundle_project = bundle_dir / "project"
-    copy_project_files(project_dir, bundle_project)
+    copy_project_files(project_dir, bundle_project, extra_include=extra_include)
 
     print("Copying project oleans...")
     n_proj = copy_project_oleans(project_dir, bundle_project)
@@ -346,8 +481,13 @@ def assemble_bundle(
     print("Copying package config files...")
     copy_package_configs(packages_dir, bundle_packages)
 
-    print("Rewriting manifest to path deps...")
-    rewrite_manifest_to_path_deps(bundle_project)
+    print("Rewriting deps to path deps...")
+    rewrite_deps_to_path(bundle_project)
+
+    # Ensure oleans are strictly newer than sources so Lake's timestamp
+    # check doesn't consider them out-of-date after copy/zip/unzip.
+    print("Fixing olean timestamps...")
+    _touch_oleans(bundle_project)
 
     print("Installing launcher...")
     if platform.startswith("windows"):
