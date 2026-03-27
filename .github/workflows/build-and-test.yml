@@ -390,8 +390,13 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
-      - name: Remove quarantine attributes
-        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+      - name: Remove quarantine attributes and fix permissions
+        run: |
+          xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          # Restore execute permissions on binaries (zip may not preserve them)
+          chmod +x "${{ steps.find-root.outputs.BUNDLE_ROOT }}"/lean/bin/*
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}/vscodium" -name "*.app" -path "*/MacOS/*" -exec chmod +x {} + 2>/dev/null || true
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}/vscodium" -type f -path "*/MacOS/*" -exec chmod +x {} +
 
       - name: Fix olean timestamps after unzip
         run: |
