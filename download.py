@@ -63,12 +63,39 @@ def _sha256_file(path: Path) -> str:
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
-    """Extract a zip file, rejecting entries that would escape dest."""
+    """Extract a zip file, preserving symlinks and rejecting path traversal."""
     dest = dest.resolve()
     for info in zf.infolist():
-        if not (dest / info.filename).resolve().is_relative_to(dest):
+        target = (dest / info.filename).resolve()
+        if not target.is_relative_to(dest):
             raise ValueError(f"Zip entry would extract outside {dest}: {info.filename!r}")
-    zf.extractall(dest)
+
+    for info in zf.infolist():
+        out_path = dest / info.filename
+        # Check if this entry is a Unix symlink (mode & S_IFLNK)
+        unix_mode = info.external_attr >> 16
+        if (unix_mode & 0o170000) == 0o120000:
+            # Symlink: the file data is the link target
+            link_target = zf.read(info.filename).decode("utf-8")
+            # Validate the resolved symlink stays inside dest
+            resolved = (out_path.parent / link_target).resolve()
+            if not resolved.is_relative_to(dest):
+                raise ValueError(
+                    f"Symlink would point outside {dest}: {info.filename!r} -> {link_target!r}"
+                )
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if out_path.exists() or out_path.is_symlink():
+                out_path.unlink()
+            out_path.symlink_to(link_target)
+        elif info.is_dir():
+            out_path.mkdir(parents=True, exist_ok=True)
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(out_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            # Restore Unix permissions if stored
+            if unix_mode:
+                out_path.chmod(unix_mode & 0o777)
 
 
 def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
