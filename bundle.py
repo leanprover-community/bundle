@@ -76,8 +76,14 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(bundle_dir.rglob("*")):
             if path.is_file():
-                arcname = path.relative_to(bundle_dir.parent)
-                zf.write(path, arcname)
+                arcname = str(path.relative_to(bundle_dir.parent))
+                info = zipfile.ZipInfo(arcname)
+                # Preserve Unix permissions (especially +x on binaries)
+                info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.file_size = path.stat().st_size
+                with open(path, "rb") as f:
+                    zf.writestr(info, f.read())
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     with open(output_path, "rb") as f:

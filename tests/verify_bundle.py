@@ -23,7 +23,7 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
     if is_windows:
         vscodium_exe = "VSCodium.exe"
     elif platform.startswith("darwin"):
-        vscodium_exe = "VSCodium.app/Contents/MacOS/Electron"
+        vscodium_exe = "VSCodium.app/Contents/MacOS/VSCodium"
     else:
         vscodium_exe = "bin/codium"
     launcher = "Start Lean.cmd" if is_windows else "Start Lean.sh"
@@ -83,10 +83,13 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
     else:
         errors.append("Missing: vscodium/data/user-data/User/settings.json")
 
-    # --- Windows DLLs ---
+    # --- Platform-specific shared libraries ---
     if is_windows:
         if not (bundle_root / "lean" / "bin" / "libleanshared.dll").is_file():
             errors.append("Missing critical DLL: lean/bin/libleanshared.dll")
+    elif platform.startswith("darwin"):
+        if not (bundle_root / "lean" / "lib" / "lean" / "libleanshared.dylib").is_file():
+            errors.append("Missing critical dylib: lean/lib/lean/libleanshared.dylib")
 
     # --- Manifest uses path deps (not git) ---
     manifest_path = bundle_root / "project" / "lake-manifest.json"

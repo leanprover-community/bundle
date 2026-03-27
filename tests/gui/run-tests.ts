@@ -39,7 +39,7 @@ async function main() {
     const vscodiumExe = isWindows
         ? path.join(bundleRoot, 'vscodium', 'VSCodium.exe')
         : isMac
-            ? path.join(bundleRoot, 'vscodium', 'VSCodium.app', 'Contents', 'MacOS', 'Electron')
+            ? path.join(bundleRoot, 'vscodium', 'VSCodium.app', 'Contents', 'MacOS', 'VSCodium')
             : path.join(bundleRoot, 'vscodium', 'bin', 'codium');
 
     if (!fs.existsSync(vscodiumExe)) {

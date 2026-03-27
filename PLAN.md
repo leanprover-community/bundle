@@ -9,7 +9,15 @@
 - **User interaction flow.** Clicking through files, typing in the editor,
   seeing live feedback. Tests currently use the VS Code API programmatically.
 
-- **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
+- **macOS offline testing.** macOS has no unprivileged network namespace
+  equivalent to Linux's `unshare -rn`. The offline guarantee is proven on
+  Linux; macOS tests run Tiers 1–4 without network isolation.
+
+- **macOS Tier 5 (VSCodium GUI).** The `.app` bundle's framework
+  symlinks are not preserved through Python's `zipfile` round-trip,
+  causing `dyld` errors when launching Electron. Need to preserve
+  symlinks in `create_zip` (e.g. use `ditto` on macOS or store
+  symlinks in the zip).
 
 ## Upstream changes that would simplify the bundle
 
