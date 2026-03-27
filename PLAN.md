@@ -23,8 +23,10 @@
 
 - **Lake offline mode**
   ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
-  Would let us stop rewriting `lake-manifest.json` to convert git deps to path
-  deps.
+  Would let us stop rewriting both `lake-manifest.json` and `lakefile.toml`/
+  `lakefile.lean` to convert git deps to path deps. Note: `lake build --no-build`
+  currently exits 3 (stale targets) after zip/unzip due to trace hash mismatches;
+  a proper offline mode would also fix this.
 
 - **Extension git check suppression**
   ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
