@@ -30,12 +30,12 @@ PLATFORM_MAP = {
         "vscodium_extract": "tar.gz",
     },
     "darwin-x64": {
-        "lean_suffix": "macOS",
+        "lean_suffix": "darwin",
         "vscodium_asset_pattern": "VSCodium-darwin-x64-{version}.zip",
         "vscodium_extract": "zip",
     },
     "darwin-arm64": {
-        "lean_suffix": "macOS_aarch64",
+        "lean_suffix": "darwin_aarch64",
         "vscodium_asset_pattern": "VSCodium-darwin-arm64-{version}.zip",
         "vscodium_extract": "zip",
     },
