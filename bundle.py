@@ -75,13 +75,18 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
     print(f"Creating {output_path}...")
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(bundle_dir.rglob("*")):
-            if path.is_file():
-                arcname = str(path.relative_to(bundle_dir.parent))
+            arcname = str(path.relative_to(bundle_dir.parent))
+            if path.is_symlink():
+                # Store symlinks with the Unix symlink type flag
+                info = zipfile.ZipInfo(arcname)
+                info.external_attr = (0o120755 << 16)  # S_IFLNK | 0755
+                info.compress_type = zipfile.ZIP_STORED
+                zf.writestr(info, str(os.readlink(path)))
+            elif path.is_file():
                 info = zipfile.ZipInfo(arcname)
                 # Preserve Unix permissions (especially +x on binaries)
                 info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
-                info.file_size = path.stat().st_size
                 with open(path, "rb") as f:
                     zf.writestr(info, f.read())
 
