@@ -136,6 +136,48 @@ jobs:
           path: /tmp/bundle-linux.zip
           retention-days: 7
 
+  build-macos-arm64:
+    runs-on: ubuntu-latest
+    needs: build-project
+    env:
+      REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-project
+
+      - name: Extract project
+        run: tar xf project.tar -C /tmp
+
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Build macOS arm64 bundle
+        run: |
+          python bundle.py "$REPO_URL" \
+            --project-dir /tmp/project \
+            --platform darwin-arm64 \
+            --work-dir /tmp/bundle-work \
+            --output /tmp/bundle-macos-arm64.zip
+
+      - name: Report bundle size
+        run: |
+          ls -lh /tmp/bundle-macos-arm64.zip
+          du -sh /tmp/bundle-work/*/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-darwin-arm64
+          path: /tmp/bundle-macos-arm64.zip
+          retention-days: 7
+
   test-linux-offline:
     runs-on: ubuntu-latest
     needs: build-linux
@@ -314,6 +356,121 @@ jobs:
 
       - name: "Tier 5: VSCodium integration smoke test"
         shell: pwsh
+        timeout-minutes: 8
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          cd tests/gui
+          node out/run-tests.js
+
+  test-macos:
+    runs-on: macos-latest
+    needs: build-macos-arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-darwin-arm64
+
+      - name: Extract bundle
+        run: |
+          mkdir bundle
+          cd bundle
+          unzip ../bundle-macos-arm64.zip
+
+      - name: Find bundle root
+        id: find-root
+        run: |
+          root=$(find bundle -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
+          echo "Bundle root: $(pwd)/$root"
+          ls "$(pwd)/$root"
+
+      - name: Remove quarantine attributes
+        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+
+      - name: Fix olean timestamps after unzip
+        run: |
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+
+      # --- Tier 1: Structural integrity ---
+      - name: "Tier 1: Verify bundle structure"
+        run: |
+          python tests/verify_bundle.py "${{ steps.find-root.outputs.BUNDLE_ROOT }}" --platform darwin-arm64
+
+      # --- Tier 1.5: lean binary test ---
+      - name: Test lean binary
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          export PATH="$root/lean/bin:$PATH"
+          lean --version
+
+      - name: Build LEAN_PATH
+        id: lean-path
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          lean_path="$root/lean/lib/lean:$root/project/.lake/build/lib/lean"
+          for pkg_dir in "$root"/project/.lake/packages/*/; do
+            if [ -d "$pkg_dir/.lake/build/lib/lean" ]; then
+              lean_path="$lean_path:$pkg_dir/.lake/build/lib/lean"
+            fi
+          done
+          echo "LEAN_PATH=$lean_path" >> "$GITHUB_OUTPUT"
+
+      # --- Tier 2: lake build --no-build ---
+      - name: "Tier 2: lake build --no-build"
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          export PATH="$root/lean/bin:$PATH"
+          export LEAN_PATH="${{ steps.lean-path.outputs.LEAN_PATH }}"
+          export ELAN_HOME="$root/lean"
+          cd "$root/project"
+          lake build --no-build 2>&1 | head -50
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then exit "$rc"; fi
+
+      # --- Tier 3: LSP protocol test ---
+      - name: "Tier 3: LSP protocol test"
+        timeout-minutes: 3
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          lean_file=$(find "$root/project" -name "*.lean" ! -path "*/.lake/*" ! -name "lakefile*" | head -1)
+          if [ -n "$lean_file" ]; then
+            python tests/lsp_smoke.py \
+              "$root/lean/bin" \
+              "${{ steps.lean-path.outputs.LEAN_PATH }}" \
+              "$lean_file" \
+              --timeout 120
+          else
+            echo "::warning::No .lean files found"
+          fi
+
+      # --- Tier 4: Launcher script integration test ---
+      - name: "Tier 4: Install pytest"
+        run: pip install pytest
+
+      - name: "Tier 4: Launcher script integration test"
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          python -m pytest tests/test_launcher.py -v
+
+      # --- Tier 5: VSCodium integration smoke test ---
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      - name: "Tier 5: Install GUI test deps"
+        run: |
+          cd tests/gui
+          npm ci
+          npx tsc
+
+      - name: "Tier 5: VSCodium integration smoke test"
         timeout-minutes: 8
         env:
           BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}

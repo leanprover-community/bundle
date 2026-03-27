@@ -9,7 +9,9 @@
 - **User interaction flow.** Clicking through files, typing in the editor,
   seeing live feedback. Tests currently use the VS Code API programmatically.
 
-- **macOS bundles.** Needs quarantine handling and `.app` bundle structure.
+- **macOS offline testing.** macOS has no unprivileged network namespace
+  equivalent to Linux's `unshare -rn`. The offline guarantee is proven on
+  Linux; macOS tests run Tiers 1–5 without network isolation.
 
 ## Upstream changes that would simplify the bundle
 

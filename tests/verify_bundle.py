@@ -83,10 +83,13 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
     else:
         errors.append("Missing: vscodium/data/user-data/User/settings.json")
 
-    # --- Windows DLLs ---
+    # --- Platform-specific shared libraries ---
     if is_windows:
         if not (bundle_root / "lean" / "bin" / "libleanshared.dll").is_file():
             errors.append("Missing critical DLL: lean/bin/libleanshared.dll")
+    elif platform.startswith("darwin"):
+        if not (bundle_root / "lean" / "lib" / "libleanshared.dylib").is_file():
+            errors.append("Missing critical dylib: lean/lib/libleanshared.dylib")
 
     # --- Manifest uses path deps (not git) ---
     manifest_path = bundle_root / "project" / "lake-manifest.json"

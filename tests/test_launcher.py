@@ -257,6 +257,72 @@ def _find_bundle_launcher(bundle_root: str, ext: str) -> Path | None:
 
 
 @pytest.mark.skipif(
+    not BUNDLE_ROOT or sys.platform == "win32",
+    reason="Requires BUNDLE_ROOT env var on Unix",
+)
+class TestBundleLauncherUnix:
+    """Test the actual launcher installed in an extracted bundle (Linux/macOS)."""
+
+    @pytest.fixture()
+    def result(self) -> dict[str, str]:
+        bundle_root = Path(BUNDLE_ROOT)
+        launcher = _find_bundle_launcher(BUNDLE_ROOT, ".sh")
+        assert launcher, f"No .sh launcher found in {BUNDLE_ROOT}"
+        patched = bundle_root / "_test_launcher.sh"
+        try:
+            _patch_unix_launcher(launcher, patched)
+            clean_env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("ELAN_HOME", "LEAN_PATH")
+            }
+            clean_env["HOME"] = str(bundle_root)
+            bash = shutil.which("bash")
+            assert bash, "bash not found"
+            r = subprocess.run(
+                [bash, str(patched)],
+                check=False,
+                timeout=30,
+                cwd=str(bundle_root),
+                capture_output=True,
+                text=True,
+                env=clean_env,
+            )
+            assert r.returncode == 0, (
+                f"Bundle launcher exited with {r.returncode}\n"
+                f"stdout: {r.stdout[:2000]}\n"
+                f"stderr: {r.stderr[:2000]}"
+            )
+            env_text = (bundle_root / "_test_env.txt").read_text()
+            env = {}
+            for line in env_text.splitlines():
+                k, _, v = line.partition("=")
+                if k:
+                    env[k] = v
+            probe = _parse_probe_output(bundle_root / "_test_probe.txt")
+            env.update(probe)
+            return env
+        finally:
+            patched.unlink(missing_ok=True)
+            (bundle_root / "_test_env.txt").unlink(missing_ok=True)
+            (bundle_root / "_test_probe.txt").unlink(missing_ok=True)
+
+    def test_path_contains_lean_bin(self, result: dict[str, str]) -> None:
+        assert "/lean/bin" in result["PATH"]
+
+    def test_elan_home_exists(self, result: dict[str, str]) -> None:
+        assert Path(result["ELAN_HOME"]).is_dir()
+
+    def test_lean_path_dirs_exist(self, result: dict[str, str]) -> None:
+        for entry in result["LEAN_PATH"].split(":"):
+            entry = entry.strip()
+            if entry:
+                assert Path(entry).is_dir(), f"LEAN_PATH entry does not exist: {entry}"
+
+    def test_workspace_argument(self, result: dict[str, str]) -> None:
+        assert Path(result["LAUNCH_ARG"]).is_dir()
+
+
+@pytest.mark.skipif(
     not BUNDLE_ROOT or sys.platform != "win32",
     reason="Requires BUNDLE_ROOT env var on Windows",
 )
