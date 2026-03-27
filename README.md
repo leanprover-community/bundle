@@ -100,9 +100,10 @@ MDD154-bundle/
   the dependency check
   ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
 
-- **Manifest rewriting.** We rewrite `lake-manifest.json` to convert git
-  dependencies to path dependencies so lake doesn't try to run git. This can be
-  removed once lake supports an offline mode
+- **Dep rewriting for offline use.** We rewrite `lake-manifest.json` and
+  `lakefile.toml`/`lakefile.lean` to convert git dependencies to path
+  dependencies so lake doesn't try to run git. This can be removed once lake
+  supports an offline mode
   ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
 
 ## Pinned versions
