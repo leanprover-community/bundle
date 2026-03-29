@@ -379,8 +379,13 @@ jobs:
       - name: Extract bundle
         run: |
           mkdir bundle
-          cd bundle
-          unzip ../bundle-macos-arm64.zip
+          python -c "
+          import sys, zipfile; sys.path.insert(0, '.')
+          from download import _safe_extract_zip
+          from pathlib import Path
+          with zipfile.ZipFile('bundle-macos-arm64.zip') as zf:
+              _safe_extract_zip(zf, Path('bundle'))
+          "
 
       - name: Find bundle root
         id: find-root
