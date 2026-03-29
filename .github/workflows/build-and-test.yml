@@ -379,8 +379,13 @@ jobs:
       - name: Extract bundle
         run: |
           mkdir bundle
-          cd bundle
-          unzip ../bundle-macos-arm64.zip
+          python -c "
+          import sys, zipfile; sys.path.insert(0, '.')
+          from download import _safe_extract_zip
+          from pathlib import Path
+          with zipfile.ZipFile('bundle-macos-arm64.zip') as zf:
+              _safe_extract_zip(zf, Path('bundle'))
+          "
 
       - name: Find bundle root
         id: find-root
@@ -390,13 +395,22 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
-      - name: Remove quarantine attributes and fix permissions
+      - name: Remove quarantine attributes
+        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+
+      - name: Verify executable permissions survived zip round-trip
         run: |
-          xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          # Restore execute permissions on binaries (zip may not preserve them)
-          chmod +x "${{ steps.find-root.outputs.BUNDLE_ROOT }}"/lean/bin/*
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}/vscodium" -name "*.app" -path "*/MacOS/*" -exec chmod +x {} + 2>/dev/null || true
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}/vscodium" -type f -path "*/MacOS/*" -exec chmod +x {} +
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          fail=0
+          for f in "$root/lean/bin/lean" "$root/lean/bin/lake" \
+                   "$root/vscodium/VSCodium.app/Contents/MacOS/VSCodium" \
+                   "$root/Start Lean.sh"; do
+            if [ ! -x "$f" ]; then
+              echo "::error::Not executable after unzip: $f"
+              fail=1
+            fi
+          done
+          if [ "$fail" -eq 1 ]; then exit 1; fi
 
       - name: Fix olean timestamps after unzip
         run: |

@@ -83,12 +83,8 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
                 info.compress_type = zipfile.ZIP_STORED
                 zf.writestr(info, str(os.readlink(path)))
             elif path.is_file():
-                info = zipfile.ZipInfo(arcname)
-                # Preserve Unix permissions (especially +x on binaries)
-                info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
-                info.compress_type = zipfile.ZIP_DEFLATED
-                with open(path, "rb") as f:
-                    zf.writestr(info, f.read())
+                # zf.write() streams the file and preserves Unix permissions
+                zf.write(path, arcname)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     with open(output_path, "rb") as f:

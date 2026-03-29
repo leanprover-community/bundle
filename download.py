@@ -65,9 +65,15 @@ def _sha256_file(path: Path) -> str:
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
     """Extract a zip file, preserving symlinks and rejecting path traversal."""
     dest = dest.resolve()
+
+    # Reject duplicate entries (could pair one entry's mode with another's content)
+    seen: set[str] = set()
     for info in zf.infolist():
-        target = (dest / info.filename).resolve()
-        if not target.is_relative_to(dest):
+        normalized = info.filename.rstrip("/")
+        if normalized in seen:
+            raise ValueError(f"Duplicate zip entry: {info.filename!r}")
+        seen.add(normalized)
+        if not (dest / info.filename).resolve().is_relative_to(dest):
             raise ValueError(f"Zip entry would extract outside {dest}: {info.filename!r}")
 
     for info in zf.infolist():
@@ -75,8 +81,9 @@ def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
         # Check if this entry is a Unix symlink (mode & S_IFLNK)
         unix_mode = info.external_attr >> 16
         if (unix_mode & 0o170000) == 0o120000:
-            # Symlink: the file data is the link target
-            link_target = zf.read(info.filename).decode("utf-8")
+            # Symlink: read via ZipInfo object (not filename) to avoid
+            # ambiguity if entries were duplicated.
+            link_target = zf.read(info).decode("utf-8")
             # Validate the resolved symlink stays inside dest
             resolved = (out_path.parent / link_target).resolve()
             if not resolved.is_relative_to(dest):

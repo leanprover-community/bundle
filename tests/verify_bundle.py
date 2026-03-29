@@ -91,6 +91,23 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
         if not (bundle_root / "lean" / "lib" / "lean" / "libleanshared.dylib").is_file():
             errors.append("Missing critical dylib: lean/lib/lean/libleanshared.dylib")
 
+    # --- macOS framework symlinks ---
+    if platform.startswith("darwin"):
+        framework = bundle_root / "vscodium" / "VSCodium.app" / "Contents" / "Frameworks"
+        ef = framework / "Electron Framework.framework"
+        expected_symlinks = [
+            ef / "Versions" / "Current",
+            ef / "Electron Framework",
+            ef / "Resources",
+            ef / "Libraries",
+            ef / "Helpers",
+        ]
+        for s in expected_symlinks:
+            if s.exists() and not s.is_symlink():
+                errors.append(f"Should be a symlink but is a regular file/dir: {s.relative_to(bundle_root)}")
+            elif not s.exists():
+                errors.append(f"Missing framework symlink: {s.relative_to(bundle_root)}")
+
     # --- Manifest uses path deps (not git) ---
     manifest_path = bundle_root / "project" / "lake-manifest.json"
     if manifest_path.is_file():

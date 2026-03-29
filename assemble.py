@@ -413,14 +413,14 @@ def assemble_bundle(
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
     print("Copying lean toolchain...")
-    shutil.copytree(lean_dir, bundle_dir / "lean", dirs_exist_ok=True)
+    shutil.copytree(lean_dir, bundle_dir / "lean", symlinks=True, dirs_exist_ok=True)
 
     if mingit_dir is not None:
         print("Copying MinGit...")
-        shutil.copytree(mingit_dir, bundle_dir / "git", dirs_exist_ok=True)
+        shutil.copytree(mingit_dir, bundle_dir / "git", symlinks=True, dirs_exist_ok=True)
 
     print("Setting up VSCodium...")
-    shutil.copytree(vscodium_dir, bundle_dir / "vscodium", dirs_exist_ok=True)
+    shutil.copytree(vscodium_dir, bundle_dir / "vscodium", symlinks=True, dirs_exist_ok=True)
     setup_vscodium_portable(
         bundle_dir / "vscodium",
         extension_dirs,
