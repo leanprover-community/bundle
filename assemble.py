@@ -5,7 +5,9 @@ into the final bundle layout.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -575,7 +577,6 @@ def assemble_bundle(
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
     if lake_bin.is_file():
-        import subprocess
         rebuild_env = os.environ.copy()
         rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
         rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
