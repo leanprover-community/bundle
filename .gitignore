@@ -9,3 +9,5 @@ __pycache__/
 # GUI test artifacts
 node_modules/
 tests/gui/out/
+tests/gui-playwright/test-results/
+tests/gui-playwright/playwright-report/

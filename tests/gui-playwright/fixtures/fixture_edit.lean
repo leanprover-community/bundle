@@ -1,0 +1,2 @@
+-- Test fixture for Tier 6: user interaction flow.
+-- The test will type content here and verify live feedback.
