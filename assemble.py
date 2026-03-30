@@ -236,6 +236,24 @@ def copy_package_extra_build_artifacts(
                 _copy_file(f, dst_lake / f.name)
                 count += 1
 
+        # Copy non-lean source directories referenced by Lake targets.
+        # e.g. proofwidgets has widget/ with TS sources that Lake validates.
+        # Without these, lake setup-file fails with "no such file or directory".
+        for item in sorted(pkg.iterdir()):
+            if not item.is_dir():
+                continue
+            dst = bundle_packages_dir / pkg.name / item.name
+            if dst.exists():
+                # Already copied (lean sources, .lake, etc.)
+                continue
+            if item.name.startswith(".") or item.name == "node_modules":
+                continue
+            shutil.copytree(
+                item, dst, symlinks=True, dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("node_modules"),
+            )
+            count += 1
+
     return count
 
 
@@ -547,6 +565,32 @@ def assemble_bundle(
     # check doesn't consider them out-of-date after copy/zip/unzip.
     print("Fixing olean timestamps...")
     _touch_oleans(bundle_project)
+
+    # Rebuild the project's own modules inside the assembled bundle.
+    # The manifest rewrite changes the content hash of lake-manifest.json,
+    # which Lake includes in build traces. Without rebuilding, the project's
+    # traces won't match and lake setup-file will try to rebuild everything.
+    # Only the project's own modules need recompilation (~seconds); dependency
+    # oleans are already cached.
+    print("Rebuilding project modules with rewritten manifest...")
+    lake_bin = bundle_dir / "lean" / "bin" / "lake"
+    if lake_bin.is_file():
+        import subprocess
+        rebuild_env = os.environ.copy()
+        rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
+        rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
+        result = subprocess.run(
+            [str(lake_bin), "build"],
+            cwd=str(bundle_project),
+            env=rebuild_env,
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode == 0:
+            print("  Project rebuild successful")
+        else:
+            stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
 
     print("Installing launcher...")
     if platform.startswith("windows"):
