@@ -187,10 +187,65 @@ def copy_package_configs(
                 _copy_file(src, dst_pkg / cf)
 
 
-def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
-    """Copy the project's own oleans into the bundle.
+def copy_package_extra_build_artifacts(
+    packages_dir: Path,
+    bundle_packages_dir: Path,
+) -> int:
+    """Copy non-lean build artifacts for packages (JS widgets, tarballs, etc.).
 
-    Returns the number of oleans copied.
+    Some packages (e.g. proofwidgets) have build targets beyond lean modules:
+    compiled widget JS in build/js/, cached downloads like .tar.gz files, and
+    their associated .trace files. Lake's ``setup-file`` checks these targets
+    and will try to rebuild them if missing, causing errors in the bundle.
+
+    This copies the complete .lake/build/ tree (excluding lib/lean/ which is
+    handled separately by copy_pruned_oleans) and any .lake/*.trace files.
+    """
+    if not packages_dir.is_dir():
+        return 0
+
+    count = 0
+    for pkg in sorted(packages_dir.iterdir()):
+        if not pkg.is_dir():
+            continue
+        lake_dir = pkg / ".lake"
+        if not lake_dir.is_dir():
+            continue
+        dst_lake = bundle_packages_dir / pkg.name / ".lake"
+
+        # Copy non-lean build directories (e.g. build/js/, build/bin/)
+        build_dir = lake_dir / "build"
+        if build_dir.is_dir():
+            for sub in sorted(build_dir.iterdir()):
+                if sub.name == "lib":
+                    # lib/lean/ is handled by copy_pruned_oleans; skip
+                    continue
+                if sub.name == "ir":
+                    # IR files are optional and large; skip to save space
+                    continue
+                dst = dst_lake / "build" / sub.name
+                if sub.is_dir():
+                    shutil.copytree(sub, dst, symlinks=True, dirs_exist_ok=True)
+                else:
+                    _copy_file(sub, dst)
+                count += 1
+
+        # Copy .lake/ root artifacts (cached downloads + traces)
+        for f in sorted(lake_dir.iterdir()):
+            if f.is_file() and (f.suffix == ".trace" or f.name.endswith(".tar.gz")):
+                _copy_file(f, dst_lake / f.name)
+                count += 1
+
+    return count
+
+
+def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
+    """Copy the project's own build artifacts into the bundle.
+
+    Copies .olean, .ilean, and .trace files so that Lake considers the
+    project's modules up-to-date (lake setup-file won't try to rebuild).
+
+    Returns the number of files copied.
     """
     build_dir = project_dir / ".lake" / "build" / "lib" / "lean"
     if not build_dir.is_dir():
@@ -199,7 +254,7 @@ def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
     count = 0
     bundle_build = bundle_project / ".lake" / "build" / "lib" / "lean"
     for f in build_dir.rglob("*"):
-        if f.is_file() and f.suffix in (".olean", ".ilean"):
+        if f.is_file() and f.suffix in (".olean", ".ilean", ".trace"):
             rel = f.relative_to(build_dir)
             _copy_file(f, bundle_build / rel)
             count += 1
@@ -480,6 +535,10 @@ def assemble_bundle(
 
     print("Copying package config files...")
     copy_package_configs(packages_dir, bundle_packages)
+
+    print("Copying extra build artifacts (widget JS, traces)...")
+    n_extra = copy_package_extra_build_artifacts(packages_dir, bundle_packages)
+    print(f"  {n_extra} extra artifacts copied")
 
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
