@@ -57,27 +57,14 @@ jobs:
           echo "File: $SAMPLE"
           [ -n "$SAMPLE" ] && head -c 500 "$SAMPLE" && echo ""
 
-      - name: "Diag: rewrite manifest and test if lake build replays"
+      - name: "Diag: record elan lean version info"
         run: |
-          cd /tmp/project
-          echo "=== Before rewrite: lake build --no-build ==="
-          timeout 30 lake build --no-build 2>&1 | tail -5 || echo "exit: $?"
-          echo "=== Rewriting manifest git->path ==="
-          python3 -c "
-          import json, sys
-          m = json.load(open('lake-manifest.json'))
-          for p in m.get('packages', []):
-            if p.get('type') == 'git':
-              p['type'] = 'path'
-              p['dir'] = '.lake/packages/' + p['name']
-              for k in ['url','rev','inputRev','subDir']:
-                p.pop(k, None)
-          json.dump(m, open('lake-manifest.json','w'), indent=1)
-          print('Rewritten', len(m.get('packages',[])), 'packages')
-          "
-          echo "=== After rewrite: lake build (30s timeout) ==="
-          timeout 30 lake build 2>&1 | tail -20
-          echo "exit: $?"
+          echo "=== elan lean --githash ==="
+          lean --githash
+          echo "=== elan lean --version ==="
+          lean --version
+          echo "=== elan lake --version ==="
+          lake --version
 
       - name: Archive built project
         run: tar cf /tmp/project.tar -C /tmp project

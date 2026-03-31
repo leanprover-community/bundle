@@ -600,6 +600,17 @@ def assemble_bundle(
         except Exception as e:
             print(f"  Could not read sample trace: {e}")
 
+    # Diagnostic: compare lean version between elan and bundle
+    print("Diagnosing lean version info...")
+    lean_bin = bundle_dir / "lean" / "bin" / "lean"
+    if lean_bin.is_file():
+        for flag in ["--githash", "--version"]:
+            try:
+                r = subprocess.run([str(lean_bin), flag], capture_output=True, timeout=10)
+                print(f"  bundle lean {flag}: {r.stdout.decode().strip()}")
+            except Exception as e:
+                print(f"  bundle lean {flag}: error {e}")
+
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
     can_run = False
