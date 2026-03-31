@@ -152,6 +152,25 @@ jobs:
             --work-dir /tmp/bundle-work \
             --output /tmp/bundle-linux.zip
 
+      - name: "Diag: test lake build with full .lake copy vs pruned"
+        run: |
+          BUNDLE=/tmp/bundle-work/MDD154-bundle
+          echo "=== Test 1: lake build in bundle (already attempted, timed out) ==="
+          echo "=== Test 2: copy FULL .lake from source project, then lake build ==="
+          # Back up the pruned .lake
+          mv "$BUNDLE/project/.lake" "$BUNDLE/project/.lake.pruned"
+          # Copy the full .lake from source project
+          cp -a /tmp/project/.lake "$BUNDLE/project/.lake"
+          # Run lake build with rewritten manifest
+          export PATH="$BUNDLE/lean/bin:$PATH"
+          export ELAN_HOME="$BUNDLE/lean"
+          cd "$BUNDLE/project"
+          timeout 30 lake build 2>&1 | tail -10
+          echo "exit code: $?"
+          # Restore pruned .lake
+          rm -rf "$BUNDLE/project/.lake"
+          mv "$BUNDLE/project/.lake.pruned" "$BUNDLE/project/.lake"
+
       - name: Report bundle size
         run: |
           ls -lh /tmp/bundle-linux.zip
