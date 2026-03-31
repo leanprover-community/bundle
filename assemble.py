@@ -574,9 +574,22 @@ def assemble_bundle(
     # traces won't match and lake setup-file will try to rebuild everything.
     # Only the project's own modules need recompilation (~seconds); dependency
     # oleans are already cached.
+    # Rebuild the project if the bundled lake binary is runnable (same platform).
+    # Cross-compiled bundles (e.g. macOS built on Linux) can't run lake here;
+    # the test jobs handle that case by running lake setup-file on the target.
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
+    can_run = False
     if lake_bin.is_file():
+        try:
+            subprocess.run(
+                [str(lake_bin), "--version"],
+                capture_output=True, timeout=10,
+            )
+            can_run = True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if can_run:
         rebuild_env = os.environ.copy()
         rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
         rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
@@ -592,6 +605,8 @@ def assemble_bundle(
         else:
             stderr = result.stderr.decode("utf-8", errors="replace")[:500]
             print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
+    else:
+        print("  Skipped (cross-platform build, lake binary not runnable)")
 
     print("Installing launcher...")
     if platform.startswith("windows"):
