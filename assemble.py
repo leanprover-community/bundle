@@ -600,31 +600,35 @@ def assemble_bundle(
         except Exception as e:
             print(f"  Could not read sample trace: {e}")
 
-    # Diagnostic: inspect specific module trace to find hash mismatch
+    # Diagnostic: compare traces between source project and bundle
     print("Diagnosing trace for Batteries.Util.LibraryNote...")
-    diag_trace = bundle_project / ".lake" / "packages" / "batteries" / ".lake" / "build" / "lib" / "lean" / "Batteries" / "Util" / "LibraryNote.trace"
-    diag_olean = diag_trace.with_suffix(".olean")
-    diag_source = bundle_project / ".lake" / "packages" / "batteries" / "Batteries" / "Util" / "LibraryNote.lean"
-    print(f"  trace exists: {diag_trace.is_file()}")
-    print(f"  olean exists: {diag_olean.is_file()}")
-    print(f"  source exists: {diag_source.is_file()}")
-    if diag_trace.is_file():
-        try:
-            import hashlib
-            trace_data = json.loads(diag_trace.read_text())
-            print(f"  trace depHash: {trace_data.get('depHash', 'MISSING')}")
-            print(f"  trace schemaVersion: {trace_data.get('schemaVersion', 'MISSING')}")
-            inputs = trace_data.get("inputs", [])
-            print(f"  trace inputs ({len(inputs)} entries):")
-            for caption, val in inputs[:20]:
-                val_str = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
-                print(f"    {caption}: {val_str[:120]}")
-        except Exception as e:
-            print(f"  trace read error: {e}")
-    if diag_source.is_file():
-        import hashlib
-        h = hashlib.sha256(diag_source.read_bytes()).hexdigest()[:16]
-        print(f"  source sha256 (first 16): {h}")
+    rel_trace = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.trace")
+    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
+        trace_path = root / rel_trace
+        print(f"  [{label}] trace exists: {trace_path.is_file()}")
+        if trace_path.is_file():
+            try:
+                trace_data = json.loads(trace_path.read_text())
+                print(f"  [{label}] depHash: {trace_data.get('depHash', 'MISSING')}")
+                print(f"  [{label}] synthetic: {trace_data.get('synthetic', 'MISSING')}")
+            except Exception as e:
+                print(f"  [{label}] read error: {e}")
+    # Check if hash files exist
+    rel_olean_hash = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean.hash")
+    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
+        hash_path = root / rel_olean_hash
+        print(f"  [{label}] .olean.hash exists: {hash_path.is_file()}")
+        if hash_path.is_file():
+            print(f"  [{label}] .olean.hash content: {hash_path.read_text().strip()[:40]}")
+    # Check olean file hash directly
+    import hashlib
+    rel_olean = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean")
+    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
+        olean_path = root / rel_olean
+        if olean_path.is_file():
+            h = hashlib.sha256(olean_path.read_bytes()).hexdigest()[:16]
+            print(f"  [{label}] olean sha256: {h}")
+            print(f"  [{label}] olean size: {olean_path.stat().st_size}")
 
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"

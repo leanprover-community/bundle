@@ -64,8 +64,11 @@ jobs:
           lean --githash
           echo "=== elan lean --version ==="
           lean --version
-          echo "=== elan lake --version ==="
-          lake --version
+          echo "=== Batteries.Util.LibraryNote trace from built project ==="
+          cat /tmp/project/.lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.trace 2>/dev/null || echo "NOT FOUND"
+          echo ""
+          echo "=== .olean.hash for Init.Prelude ==="
+          cat /tmp/project/.lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean.hash 2>/dev/null || echo "NOT FOUND"
 
       - name: Archive built project
         run: tar cf /tmp/project.tar -C /tmp project
