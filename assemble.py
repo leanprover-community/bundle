@@ -640,12 +640,14 @@ def assemble_bundle(
         except subprocess.TimeoutExpired as e:
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
             # Print whatever output we got before timeout
-            if e.stderr:
-                partial = e.stderr.decode("utf-8", errors="replace")
-                lines = partial.splitlines()
-                print(f"  stderr before timeout ({len(lines)} lines, first 30):")
-                for line in lines[:30]:
-                    print(f"    {line}")
+            for attr in ("stdout", "stderr"):
+                data = getattr(e, attr, None)
+                if data:
+                    partial = data.decode("utf-8", errors="replace")
+                    lines = partial.splitlines()
+                    print(f"  {attr} before timeout ({len(lines)} lines, first 30):")
+                    for line in lines[:30]:
+                        print(f"    {line}")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
 
