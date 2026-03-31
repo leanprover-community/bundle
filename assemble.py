@@ -593,18 +593,21 @@ def assemble_bundle(
         rebuild_env = os.environ.copy()
         rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
         rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
-        result = subprocess.run(
-            [str(lake_bin), "build"],
-            cwd=str(bundle_project),
-            env=rebuild_env,
-            capture_output=True,
-            timeout=300,
-        )
-        if result.returncode == 0:
-            print("  Project rebuild successful")
-        else:
-            stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-            print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
+        try:
+            result = subprocess.run(
+                [str(lake_bin), "build"],
+                cwd=str(bundle_project),
+                env=rebuild_env,
+                capture_output=True,
+                timeout=600,
+            )
+            if result.returncode == 0:
+                print("  Project rebuild successful")
+            else:
+                stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+                print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
+        except subprocess.TimeoutExpired:
+            print("  Warning: project rebuild timed out (600s), continuing without rebuild")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
 
