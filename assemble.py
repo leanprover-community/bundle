@@ -600,16 +600,31 @@ def assemble_bundle(
         except Exception as e:
             print(f"  Could not read sample trace: {e}")
 
-    # Diagnostic: compare lean version between elan and bundle
-    print("Diagnosing lean version info...")
-    lean_bin = bundle_dir / "lean" / "bin" / "lean"
-    if lean_bin.is_file():
-        for flag in ["--githash", "--version"]:
-            try:
-                r = subprocess.run([str(lean_bin), flag], capture_output=True, timeout=10)
-                print(f"  bundle lean {flag}: {r.stdout.decode().strip()}")
-            except Exception as e:
-                print(f"  bundle lean {flag}: error {e}")
+    # Diagnostic: inspect specific module trace to find hash mismatch
+    print("Diagnosing trace for Batteries.Util.LibraryNote...")
+    diag_trace = bundle_project / ".lake" / "packages" / "batteries" / ".lake" / "build" / "lib" / "lean" / "Batteries" / "Util" / "LibraryNote.trace"
+    diag_olean = diag_trace.with_suffix(".olean")
+    diag_source = bundle_project / ".lake" / "packages" / "batteries" / "Batteries" / "Util" / "LibraryNote.lean"
+    print(f"  trace exists: {diag_trace.is_file()}")
+    print(f"  olean exists: {diag_olean.is_file()}")
+    print(f"  source exists: {diag_source.is_file()}")
+    if diag_trace.is_file():
+        try:
+            import hashlib
+            trace_data = json.loads(diag_trace.read_text())
+            print(f"  trace depHash: {trace_data.get('depHash', 'MISSING')}")
+            print(f"  trace schemaVersion: {trace_data.get('schemaVersion', 'MISSING')}")
+            inputs = trace_data.get("inputs", [])
+            print(f"  trace inputs ({len(inputs)} entries):")
+            for caption, val in inputs[:20]:
+                val_str = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
+                print(f"    {caption}: {val_str[:120]}")
+        except Exception as e:
+            print(f"  trace read error: {e}")
+    if diag_source.is_file():
+        import hashlib
+        h = hashlib.sha256(diag_source.read_bytes()).hexdigest()[:16]
+        print(f"  source sha256 (first 16): {h}")
 
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
