@@ -102,6 +102,22 @@ MDD154-bundle/
 6. Creates a launcher script that sets PATH, LEAN_PATH, ELAN_HOME
 7. Packages everything into a zip
 
+## Testing
+
+Run all tests locally against an existing bundle:
+
+```bash
+./test.sh /path/to/MDD154-bundle
+```
+
+This runs unit tests, bundle structure verification, launcher tests, and
+Playwright GUI tests (requires Xvfb). Build a bundle first with:
+
+```bash
+python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --no-zip --work-dir /tmp/bundle-local
+./test.sh /tmp/bundle-local/MDD154-bundle
+```
+
 ## Known issues
 
 - **MinGit is bundled as a workaround.** The lean4 VS Code extension checks
