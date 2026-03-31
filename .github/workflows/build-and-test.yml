@@ -59,6 +59,7 @@ jobs:
 
       - name: "Diag: record elan lean version info"
         run: |
+          cd /tmp/project
           echo "=== elan lean --githash ==="
           lean --githash
           echo "=== elan lean --version ==="
