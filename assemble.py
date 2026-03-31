@@ -530,27 +530,45 @@ def assemble_bundle(
 
     print(f"  {len(needed)} modules in transitive closure")
 
-    print("Copying pruned dependency oleans and sources...")
-    # Build maps of package -> build dir and package -> source dir
-    build_dirs: dict[str, Path] = {}
-    source_dirs: dict[str, Path] = {}
+    # Copy FULL build artifact trees for each package.
+    # Lake's trace validation depends on the complete set of build artifacts
+    # (not just the import closure), because module traces include transitive
+    # import hashes that reference sibling modules within the same package.
+    # Pruning to just the import closure causes hash mismatches.
+    print("Copying dependency build artifacts and sources...")
+    bundle_packages = bundle_project / ".lake" / "packages"
+    n_build_files = 0
+    n_sources = 0
+
+    # Determine which packages are actually needed
+    needed_pkgs: set[str] = set()
+    for mod in needed:
+        pkg = module_to_pkg.get(mod)
+        if pkg and pkg != "_toolchain":
+            needed_pkgs.add(pkg)
 
     if packages_dir.is_dir():
         for pkg in sorted(packages_dir.iterdir()):
-            if pkg.is_dir():
-                build_lib = pkg / ".lake" / "build" / "lib" / "lean"
-                if build_lib.is_dir():
-                    build_dirs[pkg.name] = build_lib
-                source_dirs[pkg.name] = pkg
+            if not pkg.is_dir() or pkg.name not in needed_pkgs:
+                continue
+            # Copy the full build/lib/lean/ tree (oleans, ileans, traces, hashes)
+            build_lib = pkg / ".lake" / "build" / "lib" / "lean"
+            if build_lib.is_dir():
+                dst = bundle_packages / pkg.name / ".lake" / "build" / "lib" / "lean"
+                shutil.copytree(build_lib, dst, dirs_exist_ok=True)
+                n_build_files += sum(1 for _ in dst.rglob("*") if _.is_file())
 
-    # Also include toolchain oleans for Init, Lean, Std, Lake
-    build_dirs["_toolchain"] = lean_dir / "lib" / "lean"
+            # Copy only the needed source files (pruned)
+            for mod in sorted(needed):
+                if module_to_pkg.get(mod) != pkg.name:
+                    continue
+                source_rel = module_to_relpath(mod)
+                src = pkg / source_rel
+                if src.is_file():
+                    _copy_file(src, bundle_packages / pkg.name / source_rel)
+                    n_sources += 1
 
-    bundle_packages = bundle_project / ".lake" / "packages"
-    n_oleans, n_sources = copy_pruned_oleans(
-        needed, module_to_pkg, build_dirs, bundle_packages, source_dirs
-    )
-    print(f"  {n_oleans} olean files copied")
+    print(f"  {n_build_files} build artifact files copied")
     print(f"  {n_sources} source files copied")
 
     print("Copying package config files...")
@@ -569,67 +587,11 @@ def assemble_bundle(
     _touch_oleans(bundle_project)
 
     # Rebuild the project's own modules inside the assembled bundle.
-    # The manifest rewrite changes the content hash of lake-manifest.json,
-    # which Lake includes in build traces. Without rebuilding, the project's
-    # traces won't match and lake setup-file will try to rebuild everything.
-    # Only the project's own modules need recompilation (~seconds); dependency
-    # oleans are already cached.
-    # Rebuild the project if the bundled lake binary is runnable (same platform).
+    # This ensures the project's build traces are valid for the bundle's
+    # workspace configuration. Only the project's own modules need
+    # recompilation (~seconds); dependency oleans are already cached.
     # Cross-compiled bundles (e.g. macOS built on Linux) can't run lake here;
     # the test jobs handle that case by running lake setup-file on the target.
-    # Diagnostic: count and inspect trace files before rebuild
-    print("Diagnosing bundle trace files...")
-    trace_count = olean_count = hash_count = 0
-    sample_trace = None
-    for f in bundle_project.rglob("*"):
-        if f.is_file():
-            if f.suffix == ".trace":
-                trace_count += 1
-                if sample_trace is None and ".lake/packages/" in str(f):
-                    sample_trace = f
-            elif f.suffix == ".olean":
-                olean_count += 1
-            elif f.name.endswith(".olean.hash"):
-                hash_count += 1
-    print(f"  {trace_count} .trace files, {olean_count} .olean files, {hash_count} .olean.hash files")
-    if sample_trace:
-        try:
-            content = sample_trace.read_text()[:2000]
-            print(f"  Sample trace ({sample_trace.relative_to(bundle_project)}):")
-            print(f"    {content[:500]}")
-        except Exception as e:
-            print(f"  Could not read sample trace: {e}")
-
-    # Diagnostic: compare traces between source project and bundle
-    print("Diagnosing trace for Batteries.Util.LibraryNote...")
-    rel_trace = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.trace")
-    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
-        trace_path = root / rel_trace
-        print(f"  [{label}] trace exists: {trace_path.is_file()}")
-        if trace_path.is_file():
-            try:
-                trace_data = json.loads(trace_path.read_text())
-                print(f"  [{label}] depHash: {trace_data.get('depHash', 'MISSING')}")
-                print(f"  [{label}] synthetic: {trace_data.get('synthetic', 'MISSING')}")
-            except Exception as e:
-                print(f"  [{label}] read error: {e}")
-    # Check if hash files exist
-    rel_olean_hash = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean.hash")
-    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
-        hash_path = root / rel_olean_hash
-        print(f"  [{label}] .olean.hash exists: {hash_path.is_file()}")
-        if hash_path.is_file():
-            print(f"  [{label}] .olean.hash content: {hash_path.read_text().strip()[:40]}")
-    # Check olean file hash directly
-    import hashlib
-    rel_olean = Path(".lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean")
-    for label, root in [("source project", project_dir), ("bundle", bundle_project)]:
-        olean_path = root / rel_olean
-        if olean_path.is_file():
-            h = hashlib.sha256(olean_path.read_bytes()).hexdigest()[:16]
-            print(f"  [{label}] olean sha256: {h}")
-            print(f"  [{label}] olean size: {olean_path.stat().st_size}")
-
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
     can_run = False
@@ -648,36 +610,19 @@ def assemble_bundle(
         rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
         try:
             result = subprocess.run(
-                [str(lake_bin), "build", "-v"],
+                [str(lake_bin), "build"],
                 cwd=str(bundle_project),
                 env=rebuild_env,
                 capture_output=True,
                 timeout=600,
             )
-            stdout = result.stdout.decode("utf-8", errors="replace")
-            stderr = result.stderr.decode("utf-8", errors="replace")
             if result.returncode == 0:
                 print("  Project rebuild successful")
             else:
-                print(f"  Warning: project rebuild exited {result.returncode}")
-            # Print first lines of verbose output to diagnose staleness
-            for label, output in [("stdout", stdout), ("stderr", stderr)]:
-                lines = output.splitlines()
-                if lines:
-                    print(f"  {label} ({len(lines)} lines, first 30):")
-                    for line in lines[:30]:
-                        print(f"    {line}")
-        except subprocess.TimeoutExpired as e:
+                stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+                print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
+        except subprocess.TimeoutExpired:
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
-            # Print whatever output we got before timeout
-            for attr in ("stdout", "stderr"):
-                data = getattr(e, attr, None)
-                if data:
-                    partial = data.decode("utf-8", errors="replace")
-                    lines = partial.splitlines()
-                    print(f"  {attr} before timeout ({len(lines)} lines, first 30):")
-                    for line in lines[:30]:
-                        print(f"    {line}")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
 

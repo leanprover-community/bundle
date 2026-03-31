@@ -46,30 +46,6 @@ jobs:
           lake exe cache get || true
           lake build
 
-      - name: Diagnose trace files in built project
-        run: |
-          echo "=== Trace file counts ==="
-          find /tmp/project/.lake -name '*.trace' | wc -l
-          echo "=== Olean file counts ==="
-          find /tmp/project/.lake -name '*.olean' | wc -l
-          echo "=== Sample Mathlib trace (first 500 chars) ==="
-          SAMPLE=$(find /tmp/project/.lake/packages -name '*.trace' -path '*/Mathlib/*' | head -1)
-          echo "File: $SAMPLE"
-          [ -n "$SAMPLE" ] && head -c 500 "$SAMPLE" && echo ""
-
-      - name: "Diag: record elan lean version info"
-        run: |
-          cd /tmp/project
-          echo "=== elan lean --githash ==="
-          lean --githash
-          echo "=== elan lean --version ==="
-          lean --version
-          echo "=== Batteries.Util.LibraryNote trace from built project ==="
-          cat /tmp/project/.lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.trace 2>/dev/null || echo "NOT FOUND"
-          echo ""
-          echo "=== .olean.hash for Init.Prelude ==="
-          cat /tmp/project/.lake/packages/batteries/.lake/build/lib/lean/Batteries/Util/LibraryNote.olean.hash 2>/dev/null || echo "NOT FOUND"
-
       - name: Archive built project
         run: tar cf /tmp/project.tar -C /tmp project
 
@@ -151,25 +127,6 @@ jobs:
             --platform linux-x64 \
             --work-dir /tmp/bundle-work \
             --output /tmp/bundle-linux.zip
-
-      - name: "Diag: test lake build with full .lake copy vs pruned"
-        run: |
-          BUNDLE=/tmp/bundle-work/MDD154-bundle
-          echo "=== Test 1: lake build in bundle (already attempted, timed out) ==="
-          echo "=== Test 2: copy FULL .lake from source project, then lake build ==="
-          # Back up the pruned .lake
-          mv "$BUNDLE/project/.lake" "$BUNDLE/project/.lake.pruned"
-          # Copy the full .lake from source project
-          cp -a /tmp/project/.lake "$BUNDLE/project/.lake"
-          # Run lake build with rewritten manifest
-          export PATH="$BUNDLE/lean/bin:$PATH"
-          export ELAN_HOME="$BUNDLE/lean"
-          cd "$BUNDLE/project"
-          timeout 30 lake build 2>&1 | tail -10
-          echo "exit code: $?"
-          # Restore pruned .lake
-          rm -rf "$BUNDLE/project/.lake"
-          mv "$BUNDLE/project/.lake.pruned" "$BUNDLE/project/.lake"
 
       - name: Report bundle size
         run: |
