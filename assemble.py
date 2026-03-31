@@ -577,6 +577,29 @@ def assemble_bundle(
     # Rebuild the project if the bundled lake binary is runnable (same platform).
     # Cross-compiled bundles (e.g. macOS built on Linux) can't run lake here;
     # the test jobs handle that case by running lake setup-file on the target.
+    # Diagnostic: count and inspect trace files before rebuild
+    print("Diagnosing bundle trace files...")
+    trace_count = olean_count = hash_count = 0
+    sample_trace = None
+    for f in bundle_project.rglob("*"):
+        if f.is_file():
+            if f.suffix == ".trace":
+                trace_count += 1
+                if sample_trace is None and ".lake/packages/" in str(f):
+                    sample_trace = f
+            elif f.suffix == ".olean":
+                olean_count += 1
+            elif f.name.endswith(".olean.hash"):
+                hash_count += 1
+    print(f"  {trace_count} .trace files, {olean_count} .olean files, {hash_count} .olean.hash files")
+    if sample_trace:
+        try:
+            content = sample_trace.read_text()[:2000]
+            print(f"  Sample trace ({sample_trace.relative_to(bundle_project)}):")
+            print(f"    {content[:500]}")
+        except Exception as e:
+            print(f"  Could not read sample trace: {e}")
+
     print("Rebuilding project modules with rewritten manifest...")
     lake_bin = bundle_dir / "lean" / "bin" / "lake"
     can_run = False
@@ -595,19 +618,34 @@ def assemble_bundle(
         rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
         try:
             result = subprocess.run(
-                [str(lake_bin), "build"],
+                [str(lake_bin), "build", "-v"],
                 cwd=str(bundle_project),
                 env=rebuild_env,
                 capture_output=True,
                 timeout=600,
             )
+            stdout = result.stdout.decode("utf-8", errors="replace")
+            stderr = result.stderr.decode("utf-8", errors="replace")
             if result.returncode == 0:
                 print("  Project rebuild successful")
             else:
-                stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-                print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
-        except subprocess.TimeoutExpired:
+                print(f"  Warning: project rebuild exited {result.returncode}")
+            # Print first lines of verbose output to diagnose staleness
+            for label, output in [("stdout", stdout), ("stderr", stderr)]:
+                lines = output.splitlines()
+                if lines:
+                    print(f"  {label} ({len(lines)} lines, first 30):")
+                    for line in lines[:30]:
+                        print(f"    {line}")
+        except subprocess.TimeoutExpired as e:
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
+            # Print whatever output we got before timeout
+            if e.stderr:
+                partial = e.stderr.decode("utf-8", errors="replace")
+                lines = partial.splitlines()
+                print(f"  stderr before timeout ({len(lines)} lines, first 30):")
+                for line in lines[:30]:
+                    print(f"    {line}")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
 

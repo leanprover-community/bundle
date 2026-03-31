@@ -46,6 +46,18 @@ jobs:
           lake exe cache get || true
           lake build
 
+      - name: Diagnose trace files in built project
+        run: |
+          echo "=== Trace file counts ==="
+          find /tmp/project/.lake -name '*.trace' | wc -l
+          echo "=== Olean file counts ==="
+          find /tmp/project/.lake -name '*.olean' | wc -l
+          echo "=== Sample Mathlib trace file ==="
+          find /tmp/project/.lake/packages -name '*.trace' -path '*/Mathlib/*' | head -1 | xargs head -c 1000 || true
+          echo ""
+          echo "=== Sample batteries trace file ==="
+          find /tmp/project/.lake/packages -name '*.trace' -path '*/batteries/*' | head -1 | xargs head -c 1000 || true
+
       - name: Archive built project
         run: tar cf /tmp/project.tar -C /tmp project
 
