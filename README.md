@@ -6,6 +6,17 @@ Students download a zip, unpack it, double-click "Start Lean", and get a
 working editor with no installation, no network access, and no command line
 needed.
 
+## What it looks like
+
+CI runs GUI smoke tests that launch the bundle and capture screenshots,
+auto-published to GitHub Pages from the latest `main` build.
+
+![Infoview rendering — editor with proof goals in the infoview panel](https://leanprover-community.github.io/bundle/infoview-goals.png)
+
+![Live diagnostics — error feedback after typing, with error count in the status bar](https://leanprover-community.github.io/bundle/interaction-error.png)
+
+![Project exercise — a real exercise file with the infoview active](https://leanprover-community.github.io/bundle/project-exercise.png)
+
 ## Usage
 
 ```bash
@@ -90,6 +101,22 @@ MDD154-bundle/
 5. Trims the Lean toolchain (removes clang, LLVM, ~500MB saved)
 6. Creates a launcher script that sets PATH, LEAN_PATH, ELAN_HOME
 7. Packages everything into a zip
+
+## Testing
+
+Run all tests locally against an existing bundle:
+
+```bash
+./test.sh /path/to/MDD154-bundle
+```
+
+This runs unit tests, bundle structure verification, launcher tests, and
+Playwright GUI tests (requires Xvfb). Build a bundle first with:
+
+```bash
+python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --no-zip --work-dir /tmp/bundle-local
+./test.sh /tmp/bundle-local/MDD154-bundle
+```
 
 ## Known issues
 

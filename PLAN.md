@@ -1,14 +1,5 @@
 # Bundle Builder Roadmap
 
-## Not yet tested
-
-- **Infoview panel rendering.** We verify the language server produces
-  diagnostics, but don't test that the infoview webview actually renders proof
-  state. Would require Playwright for Electron or WebdriverIO UI automation.
-
-- **User interaction flow.** Clicking through files, typing in the editor,
-  seeing live feedback. Tests currently use the VS Code API programmatically.
-
 ## Upstream changes that would simplify the bundle
 
 - **Lake offline mode**

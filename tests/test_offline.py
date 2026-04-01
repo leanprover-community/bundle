@@ -201,6 +201,70 @@ def test_lake_no_build_offline() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tier 2.5 offline: lake setup-file (what the VS Code extension runs)
+# ---------------------------------------------------------------------------
+
+@skip_unless_offline
+@skip_unless_bundle
+def test_lake_setup_file_offline() -> None:
+    """``lake setup-file`` must complete quickly without rebuilding.
+
+    The lean4 VS Code extension runs ``lake setup-file <path>`` before
+    starting the language server.  If this triggers a rebuild (because
+    trace hashes changed after manifest rewriting), the student sees
+    errors instead of goals in the infoview.
+
+    We verify:
+    - exit code 0
+    - completes within 30 seconds (a rebuild would take minutes)
+    - no "Building" output (which indicates oleans are being rebuilt)
+    """
+    root = _bundle_root()
+    lake = root / "lean" / "bin" / "lake"
+    assert lake.is_file(), f"lake not found: {lake}"
+
+    # Find a project .lean file (not lakefile, not .lake)
+    project = root / "project"
+    lean_files = [
+        f for f in project.rglob("*.lean")
+        if ".lake" not in f.parts and "lakefile" not in f.name.lower()
+    ]
+    assert lean_files, "No .lean files found in project"
+    lean_file = lean_files[0]
+
+    with tempfile.TemporaryDirectory(prefix="offline-setup-file-") as tmp:
+        env = _clean_env(root, tmp)
+        r = _run_offline(
+            [str(lake), "setup-file", str(lean_file)],
+            capture_output=True,
+            timeout=30,
+            cwd=str(project),
+            env=env,
+        )
+
+    stdout = r.stdout.decode("utf-8", errors="replace")
+    stderr = r.stderr.decode("utf-8", errors="replace")
+    combined = stdout + stderr
+
+    # If lake rebuilds oleans, it prints "Building <module>" lines.
+    # That means trace hashes are stale and the student experience is broken.
+    build_lines = [
+        line for line in combined.splitlines()
+        if line.strip().startswith("✔") or "Built " in line
+    ]
+    assert not build_lines, (
+        f"lake setup-file triggered a rebuild — trace hashes are stale:\n"
+        + "\n".join(f"  {l}" for l in build_lines[:10])
+    )
+
+    assert r.returncode == 0, (
+        f"lake setup-file failed (rc={r.returncode})\n"
+        f"stdout: {stdout[:2000]}\n"
+        f"stderr: {stderr[:2000]}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tier 3 offline: LSP smoke test
 # ---------------------------------------------------------------------------
 

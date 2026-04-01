@@ -1,0 +1,15 @@
+{
+  "name": "bundle-gui-playwright-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tier 6 UI automation tests for Lean 4 bundle",
+  "scripts": {
+    "build": "tsc",
+    "test": "npx playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "playwright": "^1.52.0",
+    "typescript": "^5.0.0"
+  }
+}

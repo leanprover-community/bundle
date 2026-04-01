@@ -5,7 +5,9 @@ into the final bundle layout.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -187,10 +189,83 @@ def copy_package_configs(
                 _copy_file(src, dst_pkg / cf)
 
 
-def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
-    """Copy the project's own oleans into the bundle.
+def copy_package_extra_build_artifacts(
+    packages_dir: Path,
+    bundle_packages_dir: Path,
+) -> int:
+    """Copy non-lean build artifacts for packages (JS widgets, tarballs, etc.).
 
-    Returns the number of oleans copied.
+    Some packages (e.g. proofwidgets) have build targets beyond lean modules:
+    compiled widget JS in build/js/, cached downloads like .tar.gz files, and
+    their associated .trace files. Lake's ``setup-file`` checks these targets
+    and will try to rebuild them if missing, causing errors in the bundle.
+
+    This copies the complete .lake/build/ tree (excluding lib/lean/ which is
+    handled separately by copy_pruned_oleans) and any .lake/*.trace files.
+    """
+    if not packages_dir.is_dir():
+        return 0
+
+    count = 0
+    for pkg in sorted(packages_dir.iterdir()):
+        if not pkg.is_dir():
+            continue
+        lake_dir = pkg / ".lake"
+        if not lake_dir.is_dir():
+            continue
+        dst_lake = bundle_packages_dir / pkg.name / ".lake"
+
+        # Copy non-lean build directories (e.g. build/js/, build/bin/)
+        build_dir = lake_dir / "build"
+        if build_dir.is_dir():
+            for sub in sorted(build_dir.iterdir()):
+                if sub.name == "lib":
+                    # lib/lean/ is handled by copy_pruned_oleans; skip
+                    continue
+                if sub.name == "ir":
+                    # IR files are optional and large; skip to save space
+                    continue
+                dst = dst_lake / "build" / sub.name
+                if sub.is_dir():
+                    shutil.copytree(sub, dst, symlinks=True, dirs_exist_ok=True)
+                else:
+                    _copy_file(sub, dst)
+                count += 1
+
+        # Copy .lake/ root artifacts (cached downloads + traces)
+        for f in sorted(lake_dir.iterdir()):
+            if f.is_file() and (f.suffix == ".trace" or f.name.endswith(".tar.gz")):
+                _copy_file(f, dst_lake / f.name)
+                count += 1
+
+        # Copy non-lean source directories referenced by Lake targets.
+        # e.g. proofwidgets has widget/ with TS sources that Lake validates.
+        # Without these, lake setup-file fails with "no such file or directory".
+        for item in sorted(pkg.iterdir()):
+            if not item.is_dir():
+                continue
+            dst = bundle_packages_dir / pkg.name / item.name
+            if dst.exists():
+                # Already copied (lean sources, .lake, etc.)
+                continue
+            if item.name.startswith(".") or item.name == "node_modules":
+                continue
+            shutil.copytree(
+                item, dst, symlinks=True, dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("node_modules"),
+            )
+            count += 1
+
+    return count
+
+
+def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
+    """Copy the project's own build artifacts into the bundle.
+
+    Copies .olean, .ilean, and .trace files so that Lake considers the
+    project's modules up-to-date (lake setup-file won't try to rebuild).
+
+    Returns the number of files copied.
     """
     build_dir = project_dir / ".lake" / "build" / "lib" / "lean"
     if not build_dir.is_dir():
@@ -199,7 +274,7 @@ def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
     count = 0
     bundle_build = bundle_project / ".lake" / "build" / "lib" / "lean"
     for f in build_dir.rglob("*"):
-        if f.is_file() and f.suffix in (".olean", ".ilean"):
+        if f.is_file() and f.suffix in (".olean", ".ilean", ".trace"):
             rel = f.relative_to(build_dir)
             _copy_file(f, bundle_build / rel)
             count += 1
@@ -455,31 +530,17 @@ def assemble_bundle(
 
     print(f"  {len(needed)} modules in transitive closure")
 
-    print("Copying pruned dependency oleans and sources...")
-    # Build maps of package -> build dir and package -> source dir
-    build_dirs: dict[str, Path] = {}
-    source_dirs: dict[str, Path] = {}
-
-    if packages_dir.is_dir():
-        for pkg in sorted(packages_dir.iterdir()):
-            if pkg.is_dir():
-                build_lib = pkg / ".lake" / "build" / "lib" / "lean"
-                if build_lib.is_dir():
-                    build_dirs[pkg.name] = build_lib
-                source_dirs[pkg.name] = pkg
-
-    # Also include toolchain oleans for Init, Lean, Std, Lake
-    build_dirs["_toolchain"] = lean_dir / "lib" / "lean"
-
-    bundle_packages = bundle_project / ".lake" / "packages"
-    n_oleans, n_sources = copy_pruned_oleans(
-        needed, module_to_pkg, build_dirs, bundle_packages, source_dirs
-    )
-    print(f"  {n_oleans} olean files copied")
-    print(f"  {n_sources} source files copied")
-
-    print("Copying package config files...")
-    copy_package_configs(packages_dir, bundle_packages)
+    # Copy the full .lake/ directory from the source project.
+    # Lake's trace validation depends on the complete build artifact tree —
+    # partial copies (even of build/lib/lean/ + build/ir/) cause hash
+    # mismatches that trigger full rebuilds (>600s).
+    print("Copying project .lake directory...")
+    src_lake = project_dir / ".lake"
+    dst_lake = bundle_project / ".lake"
+    if src_lake.is_dir():
+        shutil.copytree(src_lake, dst_lake, symlinks=True, dirs_exist_ok=True)
+        n_files = sum(1 for _ in dst_lake.rglob("*") if _.is_file())
+        print(f"  {n_files} files copied")
 
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
@@ -488,6 +549,46 @@ def assemble_bundle(
     # check doesn't consider them out-of-date after copy/zip/unzip.
     print("Fixing olean timestamps...")
     _touch_oleans(bundle_project)
+
+    # Rebuild the project's own modules inside the assembled bundle.
+    # This ensures the project's build traces are valid for the bundle's
+    # workspace configuration. Only the project's own modules need
+    # recompilation (~seconds); dependency oleans are already cached.
+    # Cross-compiled bundles (e.g. macOS built on Linux) can't run lake here;
+    # the test jobs handle that case by running lake setup-file on the target.
+    print("Rebuilding project modules with rewritten manifest...")
+    lake_bin = bundle_dir / "lean" / "bin" / "lake"
+    can_run = False
+    if lake_bin.is_file():
+        try:
+            subprocess.run(
+                [str(lake_bin), "--version"],
+                capture_output=True, timeout=10,
+            )
+            can_run = True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if can_run:
+        rebuild_env = os.environ.copy()
+        rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
+        rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
+        try:
+            result = subprocess.run(
+                [str(lake_bin), "build"],
+                cwd=str(bundle_project),
+                env=rebuild_env,
+                capture_output=True,
+                timeout=600,
+            )
+            if result.returncode == 0:
+                print("  Project rebuild successful")
+            else:
+                stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+                print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
+        except subprocess.TimeoutExpired:
+            print("  Warning: project rebuild timed out (600s), continuing without rebuild")
+    else:
+        print("  Skipped (cross-platform build, lake binary not runnable)")
 
     print("Installing launcher...")
     if platform.startswith("windows"):
