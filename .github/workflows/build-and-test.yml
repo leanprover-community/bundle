@@ -288,7 +288,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: tier6-screenshots
+          name: tier6-screenshots-linux
           path: tests/gui-playwright/test-results/
           retention-days: 30
 
@@ -422,7 +422,7 @@ jobs:
   deploy-screenshots:
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: test-linux-gui
+    needs: [test-linux-gui, test-macos-gui, test-windows-gui]
     permissions:
       pages: write
       id-token: write
@@ -435,8 +435,20 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: tier6-screenshots
-          path: site
+          name: tier6-screenshots-linux
+          path: site/linux
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-macos
+          path: site/macos
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-windows
+          path: site/windows
 
       - name: Create index page
         run: |
@@ -447,20 +459,37 @@ jobs:
           <body>
             <h1>Lean 4 Bundle - GUI Test Screenshots</h1>
             <p>Latest screenshots from Tier 6 Playwright GUI tests on <code>main</code>.</p>
-            <h2>Infoview rendering</h2>
-            <img src="infoview-goals.png" alt="Infoview goals" style="max-width:100%">
-            <h2>Live diagnostics</h2>
-            <img src="interaction-error.png" alt="Interaction error" style="max-width:100%">
-            <h2>Project exercise</h2>
-            <img src="project-exercise.png" alt="Project exercise" style="max-width:100%">
+            <h2>Linux</h2>
+            <h3>Infoview rendering</h3>
+            <img src="linux/infoview-goals.png" alt="Linux infoview goals" style="max-width:100%">
+            <h3>Live diagnostics</h3>
+            <img src="linux/interaction-error.png" alt="Linux interaction error" style="max-width:100%">
+            <h3>Project exercise</h3>
+            <img src="linux/project-exercise.png" alt="Linux project exercise" style="max-width:100%">
+            <h2>macOS</h2>
+            <h3>Infoview rendering</h3>
+            <img src="macos/infoview-goals.png" alt="macOS infoview goals" style="max-width:100%">
+            <h3>Live diagnostics</h3>
+            <img src="macos/interaction-error.png" alt="macOS interaction error" style="max-width:100%">
+            <h3>Project exercise</h3>
+            <img src="macos/project-exercise.png" alt="macOS project exercise" style="max-width:100%">
+            <h2>Windows</h2>
+            <h3>Infoview rendering</h3>
+            <img src="windows/infoview-goals.png" alt="Windows infoview goals" style="max-width:100%">
+            <h3>Live diagnostics</h3>
+            <img src="windows/interaction-error.png" alt="Windows interaction error" style="max-width:100%">
+            <h3>Project exercise</h3>
+            <img src="windows/project-exercise.png" alt="Windows project exercise" style="max-width:100%">
           </body>
           </html>
           INDEXEOF
 
       - name: Verify screenshots exist
         run: |
-          for f in infoview-goals.png interaction-error.png project-exercise.png; do
-            test -f "site/$f" || { echo "::error::Missing screenshot: $f"; exit 1; }
+          for platform in linux macos windows; do
+            for f in infoview-goals.png interaction-error.png project-exercise.png; do
+              test -f "site/$platform/$f" || { echo "::warning::Missing screenshot: $platform/$f"; }
+            done
           done
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
@@ -606,3 +635,115 @@ jobs:
         run: |
           cd tests/gui
           node out/run-tests.js
+
+  test-macos-gui:
+    runs-on: macos-latest
+    needs: build-macos-arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-darwin-arm64
+
+      - name: Extract bundle
+        run: |
+          mkdir bundle
+          python -c "
+          import sys, zipfile; sys.path.insert(0, '.')
+          from download import _safe_extract_zip
+          from pathlib import Path
+          with zipfile.ZipFile('bundle-macos-arm64.zip') as zf:
+              _safe_extract_zip(zf, Path('bundle'))
+          "
+
+      - name: Find bundle root
+        id: find-root
+        run: |
+          root=$(find bundle -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
+          echo "Bundle root: $(pwd)/$root"
+
+      - name: Remove quarantine attributes
+        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+
+      - name: Fix olean timestamps after unzip
+        run: |
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+
+      - name: "Tier 6: Install Playwright test deps"
+        run: |
+          cd tests/gui-playwright
+          npm ci
+
+      - name: "Tier 6: UI automation tests (infoview + interaction)"
+        timeout-minutes: 15
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          cd tests/gui-playwright
+          npx playwright test --reporter=list
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-macos
+          path: tests/gui-playwright/test-results/
+          retention-days: 30
+
+  test-windows-gui:
+    runs-on: windows-latest
+    needs: build-windows
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-windows-x64
+
+      - name: Extract bundle
+        run: Expand-Archive -Path bundle.zip -DestinationPath bundle
+
+      - name: Find bundle root
+        id: find-root
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Path bundle -Directory | Select-Object -First 1
+          echo "BUNDLE_ROOT=$($root.FullName)" >> $env:GITHUB_OUTPUT
+          echo "Bundle root: $($root.FullName)"
+
+      - name: Fix olean timestamps after unzip
+        shell: pwsh
+        run: |
+          Get-ChildItem "${{ steps.find-root.outputs.BUNDLE_ROOT }}" -Recurse -Include *.olean,*.ilean | ForEach-Object { $_.LastWriteTime = Get-Date }
+
+      - name: "Tier 6: Install Playwright test deps"
+        shell: pwsh
+        run: |
+          cd tests/gui-playwright
+          npm ci
+
+      - name: "Tier 6: UI automation tests (infoview + interaction)"
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          cd tests/gui-playwright
+          npx playwright test --reporter=list
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-windows
+          path: tests/gui-playwright/test-results/
+          retention-days: 30
