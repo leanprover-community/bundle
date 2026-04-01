@@ -20,9 +20,10 @@ export LEAN_PATH
 
 # Launch VSCodium
 if [ -d "$BUNDLE_ROOT/vscodium/VSCodium.app" ]; then
-    # macOS
-    open "$BUNDLE_ROOT/vscodium/VSCodium.app" --args "$BUNDLE_ROOT/project"
+    # macOS — invoke the binary directly so it inherits our environment.
+    # `open` launches via Launch Services which drops env vars.
+    exec "$BUNDLE_ROOT/vscodium/VSCodium.app/Contents/MacOS/VSCodium" "$BUNDLE_ROOT/project" "$@"
 else
     # Linux
-    "$BUNDLE_ROOT/vscodium/bin/codium" "$BUNDLE_ROOT/project"
+    exec "$BUNDLE_ROOT/vscodium/bin/codium" "$BUNDLE_ROOT/project" "$@"
 fi
