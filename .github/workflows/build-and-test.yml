@@ -455,31 +455,35 @@ jobs:
           cat > site/index.html << 'INDEXEOF'
           <!DOCTYPE html>
           <html>
-          <head><title>Lean 4 Bundle - GUI Test Screenshots</title></head>
+          <head>
+            <title>Lean 4 Bundle - GUI Test Screenshots</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; }
+              h1 { border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+              .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+              .grid figure { margin: 0; text-align: center; }
+              .grid img { width: 100%; border: 1px solid #ccc; border-radius: 4px; }
+              .grid figcaption { margin-top: 6px; font-size: 0.9em; color: #555; }
+              .col-header { font-weight: bold; text-align: center; padding-bottom: 4px; border-bottom: 2px solid #888; }
+            </style>
+          </head>
           <body>
             <h1>Lean 4 Bundle - GUI Test Screenshots</h1>
-            <p>Latest screenshots from Tier 6 Playwright GUI tests on <code>main</code>.</p>
-            <h2>Linux</h2>
-            <h3>Infoview rendering</h3>
-            <img src="linux/infoview-goals.png" alt="Linux infoview goals" style="max-width:100%">
-            <h3>Live diagnostics</h3>
-            <img src="linux/interaction-error.png" alt="Linux interaction error" style="max-width:100%">
-            <h3>Project exercise</h3>
-            <img src="linux/project-exercise.png" alt="Linux project exercise" style="max-width:100%">
-            <h2>macOS</h2>
-            <h3>Infoview rendering</h3>
-            <img src="macos/infoview-goals.png" alt="macOS infoview goals" style="max-width:100%">
-            <h3>Live diagnostics</h3>
-            <img src="macos/interaction-error.png" alt="macOS interaction error" style="max-width:100%">
-            <h3>Project exercise</h3>
-            <img src="macos/project-exercise.png" alt="macOS project exercise" style="max-width:100%">
-            <h2>Windows</h2>
-            <h3>Infoview rendering</h3>
-            <img src="windows/infoview-goals.png" alt="Windows infoview goals" style="max-width:100%">
-            <h3>Live diagnostics</h3>
-            <img src="windows/interaction-error.png" alt="Windows interaction error" style="max-width:100%">
-            <h3>Project exercise</h3>
-            <img src="windows/project-exercise.png" alt="Windows project exercise" style="max-width:100%">
+            <p>Latest screenshots from Tier 6 Playwright GUI tests on <code>main</code>. Click any thumbnail for the full-size image.</p>
+            <div class="grid">
+              <div class="col-header">Linux</div>
+              <div class="col-header">macOS</div>
+              <div class="col-header">Windows</div>
+              <figure><a href="linux/infoview-goals.png"><img src="linux/infoview-goals.png" alt="Linux infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
+              <figure><a href="macos/infoview-goals.png"><img src="macos/infoview-goals.png" alt="macOS infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
+              <figure><a href="windows/infoview-goals.png"><img src="windows/infoview-goals.png" alt="Windows infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
+              <figure><a href="linux/interaction-error.png"><img src="linux/interaction-error.png" alt="Linux diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
+              <figure><a href="macos/interaction-error.png"><img src="macos/interaction-error.png" alt="macOS diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
+              <figure><a href="windows/interaction-error.png"><img src="windows/interaction-error.png" alt="Windows diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
+              <figure><a href="linux/project-exercise.png"><img src="linux/project-exercise.png" alt="Linux project"></a><figcaption>Project exercise</figcaption></figure>
+              <figure><a href="macos/project-exercise.png"><img src="macos/project-exercise.png" alt="macOS project"></a><figcaption>Project exercise</figcaption></figure>
+              <figure><a href="windows/project-exercise.png"><img src="windows/project-exercise.png" alt="Windows project"></a><figcaption>Project exercise</figcaption></figure>
+            </div>
           </body>
           </html>
           INDEXEOF
