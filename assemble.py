@@ -530,53 +530,17 @@ def assemble_bundle(
 
     print(f"  {len(needed)} modules in transitive closure")
 
-    # Copy FULL build artifact trees for each package.
-    # Lake's trace validation depends on the complete set of build artifacts
-    # (not just the import closure), because module traces include transitive
-    # import hashes that reference sibling modules within the same package.
-    # Pruning to just the import closure causes hash mismatches.
-    print("Copying dependency build artifacts and sources...")
-    bundle_packages = bundle_project / ".lake" / "packages"
-    n_build_files = 0
-    n_sources = 0
-
-    # Determine which packages are actually needed
-    needed_pkgs: set[str] = set()
-    for mod in needed:
-        pkg = module_to_pkg.get(mod)
-        if pkg and pkg != "_toolchain":
-            needed_pkgs.add(pkg)
-
-    if packages_dir.is_dir():
-        for pkg in sorted(packages_dir.iterdir()):
-            if not pkg.is_dir() or pkg.name not in needed_pkgs:
-                continue
-            # Copy the full build/lib/lean/ tree (oleans, ileans, traces, hashes)
-            build_lib = pkg / ".lake" / "build" / "lib" / "lean"
-            if build_lib.is_dir():
-                dst = bundle_packages / pkg.name / ".lake" / "build" / "lib" / "lean"
-                shutil.copytree(build_lib, dst, dirs_exist_ok=True)
-                n_build_files += sum(1 for _ in dst.rglob("*") if _.is_file())
-
-            # Copy only the needed source files (pruned)
-            for mod in sorted(needed):
-                if module_to_pkg.get(mod) != pkg.name:
-                    continue
-                source_rel = module_to_relpath(mod)
-                src = pkg / source_rel
-                if src.is_file():
-                    _copy_file(src, bundle_packages / pkg.name / source_rel)
-                    n_sources += 1
-
-    print(f"  {n_build_files} build artifact files copied")
-    print(f"  {n_sources} source files copied")
-
-    print("Copying package config files...")
-    copy_package_configs(packages_dir, bundle_packages)
-
-    print("Copying extra build artifacts (widget JS, traces)...")
-    n_extra = copy_package_extra_build_artifacts(packages_dir, bundle_packages)
-    print(f"  {n_extra} extra artifacts copied")
+    # Copy the full .lake/ directory from the source project.
+    # Lake's trace validation depends on the complete build artifact tree —
+    # partial copies (even of build/lib/lean/ + build/ir/) cause hash
+    # mismatches that trigger full rebuilds (>600s).
+    print("Copying project .lake directory...")
+    src_lake = project_dir / ".lake"
+    dst_lake = bundle_project / ".lake"
+    if src_lake.is_dir():
+        shutil.copytree(src_lake, dst_lake, symlinks=True, dirs_exist_ok=True)
+        n_files = sum(1 for _ in dst_lake.rglob("*") if _.is_file())
+        print(f"  {n_files} files copied")
 
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
