@@ -137,18 +137,25 @@ export async function launchVSCodium(options?: {
     // the bash process replaces itself with VSCodium — the child PID IS
     // the VSCodium process and process.kill() works as before.
     const isWindows = process.platform === 'win32';
-    const proc = isWindows
-        ? childProcess.spawn('cmd.exe', ['/d', '/s', '/c', `"${launcherScript}"`, ...extraArgs], {
+    let proc: childProcess.ChildProcess;
+    if (isWindows) {
+        // Build a single command string with proper quoting for cmd.exe.
+        // Each arg that contains spaces must be double-quoted.
+        const quote = (s: string) => s.includes(' ') ? `"${s}"` : s;
+        const cmdLine = [`"${launcherScript}"`, ...extraArgs.map(quote)].join(' ');
+        proc = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', cmdLine], {
             env,
             stdio: 'pipe',
             detached: false,
             windowsVerbatimArguments: true,
-        })
-        : childProcess.spawn('bash', [launcherScript, ...extraArgs], {
+        });
+    } else {
+        proc = childProcess.spawn('bash', [launcherScript, ...extraArgs], {
             env,
             stdio: 'pipe',
             detached: false,
         });
+    }
 
     proc.stdout?.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
@@ -198,12 +205,12 @@ export async function launchVSCodium(options?: {
 
 export async function closeVSCodium(result: LaunchResult) {
     try { await result.browser.close(); } catch { /* ignore */ }
-    try {
-        result.process.kill();
-        if (result.process.pid) {
-            try { process.kill(-result.process.pid, 'SIGTERM'); } catch { /* ignore */ }
-        }
-    } catch { /* ignore */ }
+    try { result.process.kill(); } catch { /* ignore */ }
+    // On Windows the spawned process is cmd.exe, not VSCodium itself.
+    // Killing cmd may not terminate the child, so use taskkill as fallback.
+    if (process.platform === 'win32') {
+        try { childProcess.execSync('taskkill /f /im VSCodium.exe 2>nul', { stdio: 'ignore' }); } catch { /* */ }
+    }
     for (const f of result.copiedFixtures) {
         try { fs.unlinkSync(f); } catch { /* ignore */ }
     }
