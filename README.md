@@ -2,20 +2,36 @@
 
 Create self-contained, offline Lean 4 bundles for teaching.
 
-Students download a zip, unpack it, double-click "Start Lean", and get a
+Students download a zip, unpack it, double-click "Start_Lean", and get a
 working editor with no installation, no network access, and no command line
 needed.
 
 ## What it looks like
 
-CI runs GUI smoke tests that launch the bundle and capture screenshots,
-auto-published to GitHub Pages from the latest `main` build.
+CI runs Playwright GUI smoke tests on all three platforms and publishes
+screenshots to [GitHub Pages](https://leanprover-community.github.io/bundle/).
 
-![Infoview rendering — editor with proof goals in the infoview panel](https://leanprover-community.github.io/bundle/infoview-goals.png)
-
-![Live diagnostics — error feedback after typing, with error count in the status bar](https://leanprover-community.github.io/bundle/interaction-error.png)
-
-![Project exercise — a real exercise file with the infoview active](https://leanprover-community.github.io/bundle/project-exercise.png)
+<table>
+<tr><th></th><th>Linux</th><th>macOS</th><th>Windows</th></tr>
+<tr>
+<td><strong>Infoview</strong></td>
+<td><a href="https://leanprover-community.github.io/bundle/linux/infoview-goals.png"><img src="https://leanprover-community.github.io/bundle/linux/infoview-goals.png" width="250" alt="Linux infoview"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/macos/infoview-goals.png"><img src="https://leanprover-community.github.io/bundle/macos/infoview-goals.png" width="250" alt="macOS infoview"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/windows/infoview-goals.png"><img src="https://leanprover-community.github.io/bundle/windows/infoview-goals.png" width="250" alt="Windows infoview"></a></td>
+</tr>
+<tr>
+<td><strong>Diagnostics</strong></td>
+<td><a href="https://leanprover-community.github.io/bundle/linux/interaction-error.png"><img src="https://leanprover-community.github.io/bundle/linux/interaction-error.png" width="250" alt="Linux diagnostics"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/macos/interaction-error.png"><img src="https://leanprover-community.github.io/bundle/macos/interaction-error.png" width="250" alt="macOS diagnostics"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/windows/interaction-error.png"><img src="https://leanprover-community.github.io/bundle/windows/interaction-error.png" width="250" alt="Windows diagnostics"></a></td>
+</tr>
+<tr>
+<td><strong>Project</strong></td>
+<td><a href="https://leanprover-community.github.io/bundle/linux/project-exercise.png"><img src="https://leanprover-community.github.io/bundle/linux/project-exercise.png" width="250" alt="Linux project"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/macos/project-exercise.png"><img src="https://leanprover-community.github.io/bundle/macos/project-exercise.png" width="250" alt="macOS project"></a></td>
+<td><a href="https://leanprover-community.github.io/bundle/windows/project-exercise.png"><img src="https://leanprover-community.github.io/bundle/windows/project-exercise.png" width="250" alt="Windows project"></a></td>
+</tr>
+</table>
 
 ## Usage
 
@@ -80,7 +96,7 @@ python bundle.py https://github.com/PatrickMassot/MDD154 \
 
 ```
 MDD154-bundle/
-  Start Lean.cmd              # Double-click to launch (Windows)
+  Start_Lean.cmd              # Double-click to launch (Windows)
   lean/                       # Trimmed Lean toolchain
   vscodium/                   # Portable VSCodium + lean4 extension
   project/                    # Course project

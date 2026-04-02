@@ -43,9 +43,16 @@ test('infoview renders goal state for a proof with sorry', async () => {
     // Find the lean4 infoview specifically (identified by extension ID + React root)
     const infoviewFrame = await findInfoviewFrame(result.browser, 120_000);
 
-    // Place cursor on sorry line to trigger goal display
+    // Place cursor on sorry line to trigger goal display.
+    // Use the Command Palette "Go to Line" instead of Ctrl/Cmd+G, which
+    // may be remapped or blocked on some platforms (e.g. macOS Cmd+G = Find Next
+    // when find widget has focus).
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.keyboard.press(`${mod}+KeyG`);
+    await page.keyboard.press(`${mod}+Shift+KeyP`);
+    await page.waitForSelector('.quick-input-widget', { timeout: 10_000 });
+    await page.keyboard.type('Go to Line', { delay: 30 });
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Enter');
     await page.waitForSelector('.quick-input-widget', { timeout: 5_000 });
     await page.keyboard.type('4');
     await page.keyboard.press('Enter');

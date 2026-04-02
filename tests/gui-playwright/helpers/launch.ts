@@ -6,7 +6,7 @@ import { chromium, Browser, Page } from 'playwright';
 function findLauncherScript(bundleRoot: string): string {
     const isWindows = process.platform === 'win32';
     const ext = isWindows ? '.cmd' : '.sh';
-    for (const name of [`Start Lean${ext}`, `start_lean${ext}`]) {
+    for (const name of [`Start_Lean${ext}`, `start_lean${ext}`]) {
         const p = path.join(bundleRoot, name);
         if (fs.existsSync(p)) return p;
     }
@@ -139,11 +139,12 @@ export async function launchVSCodium(options?: {
     const isWindows = process.platform === 'win32';
     let proc: childProcess.ChildProcess;
     if (isWindows) {
-        // Build a single command string with proper quoting for cmd.exe.
-        // Each arg that contains spaces must be double-quoted.
+        // Use cmd.exe /c to run the batch launcher. Quote any arg that
+        // contains spaces; the launcher filename itself no longer has
+        // spaces (Start_Lean.cmd) to avoid cmd.exe quoting pitfalls.
         const quote = (s: string) => s.includes(' ') ? `"${s}"` : s;
-        const cmdLine = [`"${launcherScript}"`, ...extraArgs.map(quote)].join(' ');
-        proc = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', cmdLine], {
+        const cmdLine = [quote(launcherScript), ...extraArgs.map(quote)].join(' ');
+        proc = childProcess.spawn('cmd.exe', ['/d', '/c', cmdLine], {
             env,
             stdio: 'pipe',
             detached: false,
@@ -172,8 +173,15 @@ export async function launchVSCodium(options?: {
         }
     });
 
+    // Log early exit for diagnostics (especially on Windows where VSCodium
+    // may fail to start through the batch launcher).
+    proc.on('error', (err) => console.log(`  [vscodium spawn error] ${err.message}`));
+    proc.on('exit', (code, signal) => console.log(`  [vscodium exit] code=${code} signal=${signal}`));
+
     console.log('  Waiting for CDP...');
-    await waitForCDP(cdpPort, 30_000);
+    // macOS and Windows may take longer than Linux to start VSCodium.
+    const cdpTimeout = process.platform === 'linux' ? 30_000 : 60_000;
+    await waitForCDP(cdpPort, cdpTimeout);
     console.log('  CDP available');
 
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
