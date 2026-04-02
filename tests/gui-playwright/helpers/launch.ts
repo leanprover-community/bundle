@@ -172,8 +172,15 @@ export async function launchVSCodium(options?: {
         }
     });
 
+    // Log early exit for diagnostics (especially on Windows where VSCodium
+    // may fail to start through the batch launcher).
+    proc.on('error', (err) => console.log(`  [vscodium spawn error] ${err.message}`));
+    proc.on('exit', (code, signal) => console.log(`  [vscodium exit] code=${code} signal=${signal}`));
+
     console.log('  Waiting for CDP...');
-    await waitForCDP(cdpPort, 30_000);
+    // macOS and Windows may take longer than Linux to start VSCodium.
+    const cdpTimeout = process.platform === 'linux' ? 30_000 : 60_000;
+    await waitForCDP(cdpPort, cdpTimeout);
     console.log('  CDP available');
 
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
