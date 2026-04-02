@@ -140,9 +140,13 @@ export async function launchVSCodium(options?: {
     let proc: childProcess.ChildProcess;
     if (isWindows) {
         // Build a single command string with proper quoting for cmd.exe.
-        // Each arg that contains spaces must be double-quoted.
+        // The safe pattern for cmd /s /c with a path that contains spaces
+        // is:  cmd /s /c ""path\Start Lean.cmd" arg1 arg2"
+        // The outer quotes wrap the entire command; /s strips them and
+        // preserves the inner quotes around the batch file path.
         const quote = (s: string) => s.includes(' ') ? `"${s}"` : s;
-        const cmdLine = [`"${launcherScript}"`, ...extraArgs.map(quote)].join(' ');
+        const inner = [`"${launcherScript}"`, ...extraArgs.map(quote)].join(' ');
+        const cmdLine = `"${inner}"`;
         proc = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', cmdLine], {
             env,
             stdio: 'pipe',
