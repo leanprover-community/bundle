@@ -6,7 +6,7 @@ import { chromium, Browser, Page } from 'playwright';
 function findLauncherScript(bundleRoot: string): string {
     const isWindows = process.platform === 'win32';
     const ext = isWindows ? '.cmd' : '.sh';
-    for (const name of [`Start Lean${ext}`, `start_lean${ext}`]) {
+    for (const name of [`Start_Lean${ext}`, `start_lean${ext}`]) {
         const p = path.join(bundleRoot, name);
         if (fs.existsSync(p)) return p;
     }
@@ -139,15 +139,12 @@ export async function launchVSCodium(options?: {
     const isWindows = process.platform === 'win32';
     let proc: childProcess.ChildProcess;
     if (isWindows) {
-        // Build a single command string with proper quoting for cmd.exe.
-        // The safe pattern for cmd /s /c with a path that contains spaces
-        // is:  cmd /s /c ""path\Start Lean.cmd" arg1 arg2"
-        // The outer quotes wrap the entire command; /s strips them and
-        // preserves the inner quotes around the batch file path.
+        // Use cmd.exe /c to run the batch launcher. Quote any arg that
+        // contains spaces; the launcher filename itself no longer has
+        // spaces (Start_Lean.cmd) to avoid cmd.exe quoting pitfalls.
         const quote = (s: string) => s.includes(' ') ? `"${s}"` : s;
-        const inner = [`"${launcherScript}"`, ...extraArgs.map(quote)].join(' ');
-        const cmdLine = `"${inner}"`;
-        proc = childProcess.spawn('cmd.exe', ['/d', '/s', '/c', cmdLine], {
+        const cmdLine = [quote(launcherScript), ...extraArgs.map(quote)].join(' ');
+        proc = childProcess.spawn('cmd.exe', ['/d', '/c', cmdLine], {
             env,
             stdio: 'pipe',
             detached: false,

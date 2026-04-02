@@ -26,7 +26,7 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
         vscodium_exe = "VSCodium.app/Contents/MacOS/VSCodium"
     else:
         vscodium_exe = "bin/codium"
-    launcher = "Start Lean.cmd" if is_windows else "Start Lean.sh"
+    launcher = "Start_Lean.cmd" if is_windows else "Start_Lean.sh"
 
     # --- Required files and directories ---
     required_files = [

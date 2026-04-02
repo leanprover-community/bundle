@@ -249,7 +249,7 @@ BUNDLE_ROOT = os.environ.get("BUNDLE_ROOT")
 def _find_bundle_launcher(bundle_root: str, ext: str) -> Path | None:
     """Find the launcher script in the bundle root."""
     root = Path(bundle_root)
-    for name in (f"Start Lean{ext}", f"start_lean{ext}"):
+    for name in (f"Start_Lean{ext}", f"start_lean{ext}"):
         p = root / name
         if p.exists():
             return p

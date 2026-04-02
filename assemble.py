@@ -593,10 +593,10 @@ def assemble_bundle(
     print("Installing launcher...")
     if platform.startswith("windows"):
         launcher_src = templates_dir / "start_lean.cmd"
-        launcher_dst = bundle_dir / "Start Lean.cmd"
+        launcher_dst = bundle_dir / "Start_Lean.cmd"
     else:
         launcher_src = templates_dir / "start_lean.sh"
-        launcher_dst = bundle_dir / "Start Lean.sh"
+        launcher_dst = bundle_dir / "Start_Lean.sh"
 
     shutil.copy2(launcher_src, launcher_dst)
     if not platform.startswith("windows"):

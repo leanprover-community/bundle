@@ -2,7 +2,7 @@
 
 Create self-contained, offline Lean 4 bundles for teaching.
 
-Students download a zip, unpack it, double-click "Start Lean", and get a
+Students download a zip, unpack it, double-click "Start_Lean", and get a
 working editor with no installation, no network access, and no command line
 needed.
 
@@ -96,7 +96,7 @@ python bundle.py https://github.com/PatrickMassot/MDD154 \
 
 ```
 MDD154-bundle/
-  Start Lean.cmd              # Double-click to launch (Windows)
+  Start_Lean.cmd              # Double-click to launch (Windows)
   lean/                       # Trimmed Lean toolchain
   vscodium/                   # Portable VSCodium + lean4 extension
   project/                    # Course project
