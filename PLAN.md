@@ -15,7 +15,14 @@
 ## Bundle size optimization
 
 - Investigate whether `.ir` files can be omitted (saves ~30% of olean size)
-- Investigate `.trace` file necessity
+- ~~Investigate `.trace` file necessity~~ — **not worth doing**
+  ([#16](https://github.com/leanprover-community/bundle/issues/16)).
+  Measurement on an MDD154 build: 7,803 `.trace` files, **2.09 MB total**
+  (≈0.08% of the bundle). Deleting them does not just leave targets
+  "stale" — `lake setup-file` immediately starts an 893-module rebuild
+  instead of returning the import artifact JSON. The size win is
+  negligible and the failure mode is the exact broken-infoview scenario
+  [`test_lake_setup_file_offline`](tests/test_offline.py) guards against.
 - **Git shim instead of MinGit (Windows, saves ~46 MB).** The lean4 VS Code
   extension checks for `git` on PATH at startup and blocks the language server
   if it's missing. But Lake's git operations are already neutralized by
