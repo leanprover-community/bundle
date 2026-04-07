@@ -467,7 +467,7 @@ def assemble_bundle(
     lean_dir: Path,
     vscodium_dir: Path,
     extension_dirs: list[Path],
-    mingit_dir: Path | None,
+    git_shim_exe: Path | None,
     templates_dir: Path,
     bundle_dir: Path,
     platform: str,
@@ -480,7 +480,8 @@ def assemble_bundle(
         lean_dir: Extracted and trimmed lean toolchain directory.
         vscodium_dir: Extracted VSCodium directory.
         extension_dirs: Extracted extension directories (lean4 + dependencies).
-        mingit_dir: Extracted MinGit directory (Windows only, None on other platforms).
+        git_shim_exe: Path to the built git.exe shim (Windows only, None
+            on other platforms).
         templates_dir: Directory containing launcher and settings templates.
         bundle_dir: Output bundle directory to create.
         platform: Target platform key.
@@ -490,9 +491,15 @@ def assemble_bundle(
     print("Copying lean toolchain...")
     shutil.copytree(lean_dir, bundle_dir / "lean", symlinks=True, dirs_exist_ok=True)
 
-    if mingit_dir is not None:
-        print("Copying MinGit...")
-        shutil.copytree(mingit_dir, bundle_dir / "git", symlinks=True, dirs_exist_ok=True)
+    if git_shim_exe is not None:
+        # Place the shim at <bundle>/git/cmd/git.exe so start_lean.cmd can
+        # continue prepending "%BUNDLE_ROOT%\git\cmd" to PATH. The layout
+        # matches the old MinGit install, which keeps the launcher script
+        # and any muscle-memory docs working.
+        print("Installing git shim...")
+        git_cmd = bundle_dir / "git" / "cmd"
+        git_cmd.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(git_shim_exe, git_cmd / "git.exe")
 
     print("Setting up VSCodium...")
     shutil.copytree(vscodium_dir, bundle_dir / "vscodium", symlinks=True, dirs_exist_ok=True)

@@ -47,11 +47,23 @@ PLATFORM_MAP = {
 }
 
 
-MINGIT_VERSION = "2.47.1.2"
-MINGIT_SHA256 = "5bafb35dfb249b89d726b37824eeb5022379f0e51f5fbf9c29f49bef57e85b42"
-# Git for Windows tags: vMAJOR.MINOR.PATCH.windows.REV
-_mingit_base, _mingit_rev = MINGIT_VERSION.rsplit(".", 1)
-MINGIT_URL = f"https://github.com/git-for-windows/git/releases/download/v{_mingit_base}.windows.{_mingit_rev}/MinGit-{MINGIT_VERSION}-64-bit.zip"
+# Candidate C compilers that can produce a 64-bit Windows PE. Each entry is
+# ``(binary, extra_args, cross_only)`` — ``cross_only`` binaries are explicit
+# cross-compilers and are always safe. Non-``cross_only`` entries are native
+# compilers that are only safe when we are already running on Windows (where
+# ``gcc``/``clang`` produce PE binaries without extra flags). Running
+# ``bundle.py --platform windows`` on Linux/macOS without mingw or zig
+# would otherwise silently produce an ELF/Mach-O file named ``git.exe``.
+_GIT_SHIM_COMPILERS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    # Explicit cross-compilers — always safe.
+    ("x86_64-w64-mingw32-gcc", (), True),
+    ("x86_64-w64-mingw32-cc", (), True),
+    # Zig's cc driver ships its own libc and cross-compiles trivially.
+    ("zig", ("cc", "-target", "x86_64-windows-gnu"), True),
+    # Native compilers — only trusted on a Windows build host.
+    ("gcc", (), False),
+    ("clang", (), False),
+)
 
 # Extension dependencies expected from the lean4 extension's package.json.
 # Maps extension ID to pinned version. Reject unknown IDs and fetch only the
@@ -129,37 +141,106 @@ def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
     tf.extractall(dest)
 
 
-def download_mingit(dest_dir: Path, platform: str) -> Path | None:
-    """Download MinGit for Windows. Returns None on non-Windows platforms.
+def build_git_shim(dest_dir: Path, platform: str) -> Path | None:
+    """Build a tiny ``git.exe`` shim for Windows bundles.
 
-    The lean4 VS Code extension requires git on PATH. Students may not
-    have git installed, so we bundle MinGit.
+    The lean4 VS Code extension and VS Code's built-in git extension both
+    probe for ``git`` on PATH at startup. Historically the bundle shipped
+    MinGit (~46 MB) to satisfy this probe. The shim is a ~30 KB C program
+    that answers only the probes both extensions perform at activation
+    (see ``shim/git_shim.c`` for the full probe surface).
+
+    Returns the path to the built ``git.exe``, or ``None`` on non-Windows
+    platforms. Raises ``RuntimeError`` if no suitable compiler is found;
+    on Linux, install ``gcc-mingw-w64-x86-64`` or put ``zig`` on PATH.
+    Raises ``RuntimeError`` (with the offending bytes) if the compiler
+    produced something that isn't a Windows PE image — this guards
+    against accidentally building with a native compiler that doesn't
+    cross-compile (e.g. clang on macOS without ``-target``).
     """
     if not platform.startswith("windows"):
         return None
 
-    mingit_dir = dest_dir / "mingit"
-    if mingit_dir.is_dir():
-        return mingit_dir
+    source = Path(__file__).resolve().parent / "shim" / "git_shim.c"
+    if not source.is_file():
+        raise RuntimeError(f"git shim source not found: {source}")
 
-    archive = dest_dir / f"MinGit-{MINGIT_VERSION}-64-bit.zip"
-    print(f"  Downloading MinGit {MINGIT_VERSION}...")
-    _download(MINGIT_URL, archive)
-    actual = _sha256_file(archive)
-    print(f"  SHA-256: {actual}")
-    if actual != MINGIT_SHA256:
-        archive.unlink()
-        raise ValueError(
-            f"MinGit checksum mismatch: expected {MINGIT_SHA256}, got {actual}"
+    shim_dir = dest_dir / "git-shim"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    output = shim_dir / "git.exe"
+    # Source is unlikely to change mid-build, but if someone edits the .c
+    # and reuses an existing work-dir we want the new shim, not a stale one.
+    if output.is_file() and output.stat().st_mtime >= source.stat().st_mtime:
+        _assert_pe_image(output)
+        return output
+
+    compiler, extra = _find_git_shim_compiler()
+    cmd = [compiler, *extra, "-O2", "-Wall", "-Wextra", "-s",
+           "-o", str(output), str(source)]
+    print(f"  Building git shim with {compiler}...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git shim build failed ({' '.join(cmd)}):\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
+    _assert_pe_image(output)
+    size = output.stat().st_size
+    print(f"  Built {output.name} ({size} bytes)")
+    return output
 
-    print(f"  Extracting MinGit...")
-    mingit_dir.mkdir(exist_ok=True)
-    with zipfile.ZipFile(archive) as zf:
-        _safe_extract_zip(zf, mingit_dir)
-    archive.unlink()
 
-    return mingit_dir
+def _assert_pe_image(path: Path) -> None:
+    """Verify ``path`` is a Windows PE32+ image.
+
+    A PE file begins with a DOS header (``MZ``) followed by an optional
+    DOS stub; the real PE header lives at the 4-byte offset stored at
+    0x3C in the DOS header and starts with ``PE\\0\\0``. We check both so
+    an accidentally native-compiled ELF/Mach-O binary is caught loudly
+    instead of silently shipping a non-Windows file named ``git.exe``.
+    """
+    with open(path, "rb") as f:
+        dos = f.read(0x40)
+        if len(dos) < 0x40 or dos[:2] != b"MZ":
+            raise RuntimeError(
+                f"git shim at {path} is not a PE image (bad DOS magic): "
+                f"{dos[:4]!r}"
+            )
+        e_lfanew = int.from_bytes(dos[0x3C:0x40], "little")
+        f.seek(e_lfanew)
+        pe_sig = f.read(4)
+        if pe_sig != b"PE\x00\x00":
+            raise RuntimeError(
+                f"git shim at {path} is not a PE image "
+                f"(bad PE signature at 0x{e_lfanew:X}): {pe_sig!r}. "
+                f"A native non-Windows compiler probably built the shim. "
+                f"Install mingw-w64 (apt-get install gcc-mingw-w64-x86-64) "
+                f"or zig."
+            )
+
+
+def _find_git_shim_compiler() -> tuple[str, tuple[str, ...]]:
+    """Return ``(binary, extra_args)`` for the first available compiler.
+
+    On non-Windows build hosts, only explicit cross-compilers are
+    considered — a native ``gcc``/``clang`` on Linux/macOS would produce
+    an ELF/Mach-O binary rather than a PE image. Raises ``RuntimeError``
+    with install instructions if none is found.
+    """
+    on_windows = sys.platform == "win32"
+    for binary, extra, cross_only in _GIT_SHIM_COMPILERS:
+        if not cross_only and not on_windows:
+            continue
+        resolved = shutil.which(binary)
+        if resolved:
+            return resolved, extra
+    raise RuntimeError(
+        "No C compiler found for building the Windows git shim. Install "
+        "one of:\n"
+        "  - mingw-w64 (Linux: apt-get install gcc-mingw-w64-x86-64)\n"
+        "  - zig (https://ziglang.org/download/)\n"
+        "  - gcc or clang on a Windows build host"
+    )
 
 
 def parse_toolchain(toolchain_file: Path) -> str:

@@ -28,9 +28,9 @@ from pathlib import Path
 from assemble import assemble_bundle
 from download import (
     PLATFORM_MAP,
+    build_git_shim,
     download_lean4_extension,
     download_lean_toolchain,
-    download_mingit,
     download_vscodium,
     parse_toolchain,
     trim_lean_toolchain,
@@ -196,7 +196,7 @@ def main() -> None:
         lean_dir = download_lean_toolchain(lean_version, args.platform, downloads_dir)
         vscodium_dir, vscodium_version = download_vscodium(args.platform, downloads_dir, args.vscodium_version)
         extension_dirs, extension_version = download_lean4_extension(downloads_dir, args.extension_version)
-        mingit_dir = download_mingit(downloads_dir, args.platform)
+        git_shim_exe = build_git_shim(downloads_dir, args.platform)
 
         if not args.project_dir:
             print("\n--- Building project ---")
@@ -212,7 +212,7 @@ def main() -> None:
             lean_dir=lean_dir,
             vscodium_dir=vscodium_dir,
             extension_dirs=extension_dirs,
-            mingit_dir=mingit_dir,
+            git_shim_exe=git_shim_exe,
             templates_dir=templates_dir,
             bundle_dir=bundle_dir,
             platform=args.platform,
