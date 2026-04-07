@@ -5,7 +5,7 @@ Checks that all expected files, directories, DLLs, extensions, settings,
 and git stubs are present and correct.
 
 Usage:
-    python tests/verify_bundle.py <bundle_root> [--platform windows-x64]
+    python tests/verify_bundle.py <bundle_root> [--platform windows]
 """
 
 import json
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
+def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
     """Verify bundle structure. Returns list of error strings (empty = OK)."""
     errors: list[str] = []
     is_windows = platform.startswith("windows")
@@ -130,11 +130,11 @@ def verify(bundle_root: Path, platform: str = "windows-x64") -> list[str]:
 
 def main():
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <bundle_root> [--platform windows-x64]")
+        print(f"Usage: {sys.argv[0]} <bundle_root> [--platform windows]")
         sys.exit(1)
 
     bundle_root = Path(sys.argv[1])
-    platform = "windows-x64"
+    platform = "windows"
     if "--platform" in sys.argv:
         idx = sys.argv.index("--platform")
         if idx + 1 < len(sys.argv):

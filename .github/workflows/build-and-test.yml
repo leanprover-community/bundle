@@ -82,7 +82,7 @@ jobs:
         run: |
           python bundle.py "$REPO_URL" \
             --project-dir /tmp/project \
-            --platform windows-x64 \
+            --platform windows \
             --work-dir /tmp/bundle-work \
             --output /tmp/bundle.zip
 
@@ -93,7 +93,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: bundle-windows-x64
+          name: bundle-windows
           path: /tmp/bundle.zip
           retention-days: 7
 
@@ -303,7 +303,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: bundle-windows-x64
+          name: bundle-windows
 
       - name: Extract bundle
         run: Expand-Archive -Path bundle.zip -DestinationPath bundle
@@ -326,7 +326,7 @@ jobs:
       - name: "Tier 1: Verify bundle structure"
         shell: pwsh
         run: |
-          python tests/verify_bundle.py "${{ steps.find-root.outputs.BUNDLE_ROOT }}" --platform windows-x64
+          python tests/verify_bundle.py "${{ steps.find-root.outputs.BUNDLE_ROOT }}" --platform windows
 
       # --- Existing: lean binary test ---
       - name: Test lean binary
@@ -713,7 +713,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: bundle-windows-x64
+          name: bundle-windows
 
       - name: Extract bundle
         run: Expand-Archive -Path bundle.zip -DestinationPath bundle

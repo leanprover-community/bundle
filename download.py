@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 PLATFORM_MAP = {
-    "windows-x64": {
+    "windows": {
         "lean_suffix": "windows",
         "vscodium_asset_pattern": "VSCodium-win32-x64-{version}.zip",
         "vscodium_extract": "zip",
