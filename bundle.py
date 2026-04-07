@@ -2,7 +2,7 @@
 """Create a self-contained Lean 4 bundle for offline use.
 
 Usage:
-    python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows-x64
+    python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows
 
 This will:
 1. Clone the project
@@ -159,7 +159,7 @@ def main() -> None:
         machine = platform.machine().lower()
         system = platform.system().lower()
         if system == "windows":
-            args.platform = "windows-x64"
+            args.platform = "windows"
         elif system == "linux":
             args.platform = "linux-x64"
         elif system == "darwin":

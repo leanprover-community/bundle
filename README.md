@@ -36,10 +36,10 @@ screenshots to [GitHub Pages](https://leanprover-community.github.io/bundle/).
 ## Usage
 
 ```bash
-python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows-x64
+python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows
 ```
 
-This produces `MDD154-bundle-windows-x64.zip` containing:
+This produces `MDD154-bundle-windows.zip` containing:
 
 - **VSCodium** (portable mode) with the lean4 extension pre-installed
 - **Lean 4** toolchain (trimmed to essentials)
@@ -60,7 +60,7 @@ Students need none of these.
 ### Options
 
 ```
---platform {windows-x64,linux-x64,darwin-x64,darwin-arm64}
+--platform {windows,linux-x64,darwin-x64,darwin-arm64}
     Target platform (default: auto-detect)
 
 --output PATH
@@ -89,7 +89,7 @@ If you've already cloned and built the project:
 ```bash
 python bundle.py https://github.com/PatrickMassot/MDD154 \
     --project-dir /path/to/MDD154 \
-    --platform windows-x64
+    --platform windows
 ```
 
 ## What's in the bundle
