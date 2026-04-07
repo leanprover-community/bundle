@@ -29,6 +29,11 @@ PLATFORM_MAP = {
         "vscodium_asset_pattern": "VSCodium-linux-x64-{version}.tar.gz",
         "vscodium_extract": "tar.gz",
     },
+    "linux-arm64": {
+        "lean_suffix": "linux_aarch64",
+        "vscodium_asset_pattern": "VSCodium-linux-arm64-{version}.tar.gz",
+        "vscodium_extract": "tar.gz",
+    },
     "darwin-x64": {
         "lean_suffix": "darwin",
         "vscodium_asset_pattern": "VSCodium-darwin-x64-{version}.zip",

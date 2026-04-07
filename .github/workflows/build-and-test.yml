@@ -139,6 +139,58 @@ jobs:
           path: /tmp/bundle-linux.zip
           retention-days: 7
 
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    needs: unit-tests
+    env:
+      REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/PatrickMassot/MDD154' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      # Clone and build the project natively on the arm64 runner.
+      # Unlike the other platforms (which reuse the x64-built artifact
+      # because oleans are arch-agnostic and the target toolchain is
+      # cross-compiled), arm64 runs the bundle's own lake at the end of
+      # assemble_bundle. Any stale x64 native artifacts (`ir/`, shared libs,
+      # binaries) from the shared artifact would be picked up by trace
+      # validation. Building fresh on arm64 sidesteps that class of bugs.
+      - name: Clone and build project
+        # Tier 6 GUI tests assert on specific file content (f01_egalites.lean line 44).
+        # Pin the default project to a known commit so upstream changes don't break tests.
+        run: |
+          git clone "$REPO_URL" /tmp/project
+          cd /tmp/project
+          git checkout 1f32d8e95f5567c9aabcd55297840bda340ad913 2>/dev/null || true
+          lake exe cache get || true
+          lake build
+
+      - name: Build Linux arm64 bundle
+        run: |
+          python bundle.py "$REPO_URL" \
+            --project-dir /tmp/project \
+            --platform linux-arm64 \
+            --work-dir /tmp/bundle-work \
+            --output /tmp/bundle-linux-arm64.zip
+
+      - name: Report bundle size
+        run: |
+          ls -lh /tmp/bundle-linux-arm64.zip
+          du -sh /tmp/bundle-work/*/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-linux-arm64
+          path: /tmp/bundle-linux-arm64.zip
+          retention-days: 7
+
   build-macos-arm64:
     runs-on: ubuntu-latest
     needs: build-project
@@ -292,6 +344,117 @@ jobs:
           path: tests/gui-playwright/test-results/
           retention-days: 30
 
+  test-linux-arm64-offline:
+    runs-on: ubuntu-24.04-arm
+    needs: build-linux-arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: "Preflight: verify network isolation works"
+        run: |
+          if unshare -rn -- true 2>/dev/null; then
+            echo "Using: unshare -rn"
+          elif sudo -n unshare --net -- true 2>/dev/null; then
+            echo "Using: sudo unshare --net"
+          else
+            echo "::error::Neither 'unshare -rn' nor 'sudo unshare --net' works"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-linux-arm64
+
+      - name: Extract bundle
+        run: |
+          mkdir bundle
+          cd bundle
+          unzip ../bundle-linux-arm64.zip
+
+      - name: Find bundle root
+        id: find-root
+        run: |
+          root=$(find bundle -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
+          echo "Bundle root: $(pwd)/$root"
+          ls "$(pwd)/$root"
+
+      - name: Fix olean timestamps after unzip
+        run: |
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+
+      # --- Tier 1: Structural integrity ---
+      - name: "Tier 1: Verify bundle structure"
+        run: |
+          python tests/verify_bundle.py "${{ steps.find-root.outputs.BUNDLE_ROOT }}" --platform linux-arm64
+
+      # --- Tier 2+3 offline: lake and LSP with network disabled ---
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: "Offline: Run offline guarantee tests"
+        timeout-minutes: 5
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          python -m pytest tests/test_offline.py -v
+
+  test-linux-arm64-gui:
+    runs-on: ubuntu-24.04-arm
+    needs: build-linux-arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-linux-arm64
+
+      - name: Extract bundle
+        run: |
+          mkdir bundle
+          cd bundle
+          unzip ../bundle-linux-arm64.zip
+
+      - name: Find bundle root
+        id: find-root
+        run: |
+          root=$(find bundle -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
+          echo "Bundle root: $(pwd)/$root"
+
+      - name: Fix olean timestamps after unzip
+        run: |
+          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: "Tier 6: Install Playwright test deps"
+        run: |
+          cd tests/gui-playwright
+          npm ci
+
+      - name: "Tier 6: UI automation tests (infoview + interaction)"
+        timeout-minutes: 15
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          cd tests/gui-playwright
+          xvfb-run --auto-servernum npx playwright test --reporter=list
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-linux-arm64
+          path: tests/gui-playwright/test-results/
+          retention-days: 30
+
   test-windows:
     runs-on: windows-latest
     needs: build-windows
@@ -422,7 +585,7 @@ jobs:
   deploy-screenshots:
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: [test-linux-gui, test-macos-gui, test-windows-gui]
+    needs: [test-linux-gui, test-linux-arm64-gui, test-macos-gui, test-windows-gui]
     permissions:
       pages: write
       id-token: write
@@ -438,6 +601,12 @@ jobs:
         with:
           name: tier6-screenshots-linux
           path: site/linux
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: tier6-screenshots-linux-arm64
+          path: site/linux-arm64
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
@@ -459,9 +628,9 @@ jobs:
           <head>
             <title>Lean 4 Bundle - GUI Test Screenshots</title>
             <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; }
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
               h1 { border-bottom: 1px solid #ddd; padding-bottom: 10px; }
-              .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+              .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
               .grid figure { margin: 0; text-align: center; }
               .grid img { width: 100%; border: 1px solid #ccc; border-radius: 4px; }
               .grid figcaption { margin-top: 6px; font-size: 0.9em; color: #555; }
@@ -472,16 +641,20 @@ jobs:
             <h1>Lean 4 Bundle - GUI Test Screenshots</h1>
             <p>Latest screenshots from Tier 6 Playwright GUI tests on <code>main</code>. Click any thumbnail for the full-size image.</p>
             <div class="grid">
-              <div class="col-header">Linux</div>
+              <div class="col-header">Linux x64</div>
+              <div class="col-header">Linux arm64</div>
               <div class="col-header">macOS</div>
               <div class="col-header">Windows</div>
-              <figure><a href="linux/infoview-goals.png"><img src="linux/infoview-goals.png" alt="Linux infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
+              <figure><a href="linux/infoview-goals.png"><img src="linux/infoview-goals.png" alt="Linux x64 infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
+              <figure><a href="linux-arm64/infoview-goals.png"><img src="linux-arm64/infoview-goals.png" alt="Linux arm64 infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
               <figure><a href="macos/infoview-goals.png"><img src="macos/infoview-goals.png" alt="macOS infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
               <figure><a href="windows/infoview-goals.png"><img src="windows/infoview-goals.png" alt="Windows infoview goals"></a><figcaption>Infoview goals</figcaption></figure>
-              <figure><a href="linux/interaction-error.png"><img src="linux/interaction-error.png" alt="Linux diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
+              <figure><a href="linux/interaction-error.png"><img src="linux/interaction-error.png" alt="Linux x64 diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
+              <figure><a href="linux-arm64/interaction-error.png"><img src="linux-arm64/interaction-error.png" alt="Linux arm64 diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
               <figure><a href="macos/interaction-error.png"><img src="macos/interaction-error.png" alt="macOS diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
               <figure><a href="windows/interaction-error.png"><img src="windows/interaction-error.png" alt="Windows diagnostics"></a><figcaption>Live diagnostics</figcaption></figure>
-              <figure><a href="linux/project-exercise.png"><img src="linux/project-exercise.png" alt="Linux project"></a><figcaption>Project exercise</figcaption></figure>
+              <figure><a href="linux/project-exercise.png"><img src="linux/project-exercise.png" alt="Linux x64 project"></a><figcaption>Project exercise</figcaption></figure>
+              <figure><a href="linux-arm64/project-exercise.png"><img src="linux-arm64/project-exercise.png" alt="Linux arm64 project"></a><figcaption>Project exercise</figcaption></figure>
               <figure><a href="macos/project-exercise.png"><img src="macos/project-exercise.png" alt="macOS project"></a><figcaption>Project exercise</figcaption></figure>
               <figure><a href="windows/project-exercise.png"><img src="windows/project-exercise.png" alt="Windows project"></a><figcaption>Project exercise</figcaption></figure>
             </div>
@@ -491,7 +664,7 @@ jobs:
 
       - name: Verify screenshots exist
         run: |
-          for platform in linux macos windows; do
+          for platform in linux linux-arm64 macos windows; do
             for f in infoview-goals.png interaction-error.png project-exercise.png; do
               test -f "site/$platform/$f" || { echo "::warning::Missing screenshot: $platform/$f"; }
             done
