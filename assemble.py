@@ -163,35 +163,14 @@ def install_lake_wrapper(bundle_dir: Path, platform: str) -> None:
 
     The real binary is renamed to ``lake.real``; a shell wrapper takes its
     place and strips ``.ir`` entries from ``lake setup-file`` JSON output.
-    On Windows, a ``.cmd`` wrapper is installed instead.
+    Only supported on Unix; callers should skip this on Windows.
     """
-    if platform.startswith("windows"):
-        lake = bundle_dir / "lean" / "bin" / "lake.exe"
-        lake_real = bundle_dir / "lean" / "bin" / "lake-real.exe"
-        if lake.is_file():
-            lake.rename(lake_real)
-            wrapper = bundle_dir / "lean" / "bin" / "lake.cmd"
-            wrapper.write_text(
-                '@echo off\r\n'
-                'setlocal\r\n'
-                'set "REAL=%~dp0lake-real.exe"\r\n'
-                'if "%1"=="setup-file" (\r\n'
-                '  "%REAL%" %* | python3 -c "'
-                "import sys,json;"
-                "data=json.load(sys.stdin);"
-                "[arts.__setitem__(slice(None),[a for a in arts if not a.endswith('.ir')]) for arts in data.get('importArts',{}).values()];"
-                'json.dump(data,sys.stdout)"\r\n'
-                ') else (\r\n'
-                '  "%REAL%" %*\r\n'
-                ')\r\n'
-            )
-    else:
-        lake = bundle_dir / "lean" / "bin" / "lake"
-        lake_real = bundle_dir / "lean" / "bin" / "lake.real"
-        if lake.is_file():
-            lake.rename(lake_real)
-            lake.write_text(_LAKE_WRAPPER_SH)
-            lake.chmod(0o755)
+    lake = bundle_dir / "lean" / "bin" / "lake"
+    lake_real = bundle_dir / "lean" / "bin" / "lake.real"
+    if lake.is_file():
+        lake.rename(lake_real)
+        lake.write_text(_LAKE_WRAPPER_SH)
+        lake.chmod(0o755)
 
 
 def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
@@ -510,13 +489,18 @@ def assemble_bundle(
     # need them, and we can safely drop them without breaking Lake's trace
     # freshness check (see prune_ir_from_bundle for why the .ir.hash
     # sidecars, build/ir/, and .trace files all stay put).
-    print("Pruning Lean IR payloads from bundle...")
-    n_pruned, bytes_freed = prune_ir_from_bundle(bundle_project)
-    print(f"  {n_pruned} *.ir files removed ({bytes_freed / (1024 * 1024):.1f} MB freed)")
-
-    if n_pruned > 0:
-        print("Installing lake wrapper to strip .ir from setup-file output...")
-        install_lake_wrapper(bundle_dir, platform)
+    # On Windows the lake wrapper mechanism is unreliable (the VS Code
+    # extension may invoke lake.exe directly, bypassing .cmd wrappers),
+    # so we skip IR pruning there.
+    if not platform.startswith("windows"):
+        print("Pruning Lean IR payloads from bundle...")
+        n_pruned, bytes_freed = prune_ir_from_bundle(bundle_project)
+        print(f"  {n_pruned} *.ir files removed ({bytes_freed / (1024 * 1024):.1f} MB freed)")
+        if n_pruned > 0:
+            print("Installing lake wrapper to strip .ir from setup-file output...")
+            install_lake_wrapper(bundle_dir, platform)
+    else:
+        print("Skipping IR pruning on Windows (lake wrapper not supported)")
 
     print("Installing launcher...")
     if platform.startswith("windows"):
