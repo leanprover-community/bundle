@@ -161,7 +161,7 @@ def main() -> None:
         if system == "windows":
             args.platform = "windows"
         elif system == "linux":
-            args.platform = "linux-x64"
+            args.platform = "linux-arm64" if machine in ("arm64", "aarch64") else "linux-x64"
         elif system == "darwin":
             args.platform = "darwin-arm64" if machine in ("arm64", "aarch64") else "darwin-x64"
         else:
