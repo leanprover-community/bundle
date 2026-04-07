@@ -11,7 +11,6 @@ import subprocess
 import time
 from pathlib import Path
 
-from import_closure import compute_src_deps, find_module_build_artifacts, module_to_relpath
 
 
 def _copy_file(src: Path, dst: Path) -> None:
@@ -33,49 +32,6 @@ def _touch_oleans(bundle_project: Path) -> None:
     for ext in ("*.olean", "*.ilean"):
         for p in bundle_project.rglob(ext):
             os.utime(p, (future, future))
-
-
-def classify_dep_source(
-    src: Path,
-    project_dir: Path,
-    packages_dir: Path,
-    toolchain_lib: Path,
-) -> tuple[str, str | None] | None:
-    """Map a dependency source path to its module name and owning package.
-
-    Project sources are returned with `pkg_name=None` because they are copied
-    separately; package and toolchain sources include the package key used by
-    `copy_pruned_oleans`.
-    """
-    if src.suffix != ".lean":
-        return None
-
-    try:
-        rel = src.relative_to(packages_dir)
-    except ValueError:
-        rel = None
-    if rel and len(rel.parts) >= 2:
-        pkg_name = rel.parts[0]
-        mod = ".".join(Path(*rel.parts[1:]).with_suffix("").parts)
-        return mod, pkg_name
-
-    try:
-        rel = src.relative_to(toolchain_lib)
-    except ValueError:
-        rel = None
-    if rel and rel.parts:
-        mod = ".".join(rel.with_suffix("").parts)
-        return mod, "_toolchain"
-
-    try:
-        rel = src.relative_to(project_dir)
-    except ValueError:
-        rel = None
-    if rel and ".lake" not in rel.parts:
-        mod = ".".join(rel.with_suffix("").parts)
-        return mod, None
-
-    return None
 
 
 _ALLOWLIST_FILES = {
@@ -131,132 +87,90 @@ def copy_project_files(
                     )
 
 
-def copy_pruned_oleans(
-    needed_modules: set[str],
-    module_to_pkg: dict[str, str],
-    build_dirs: dict[str, Path],
-    bundle_packages_dir: Path,
-    pkg_source_dirs: dict[str, Path],
-) -> tuple[int, int]:
-    """Copy only the transitively needed oleans and sources into the bundle."""
-    oleans_copied = 0
-    sources_copied = 0
+def prune_ir_from_bundle(bundle_project: Path) -> tuple[int, int]:
+    """Delete Lean IR payloads from the bundle's ``.lake/`` tree.
 
-    for mod in sorted(needed_modules):
-        pkg_name = module_to_pkg.get(mod)
-        if not pkg_name:
-            continue
-        build_dir = build_dirs.get(pkg_name)
-        if build_dir:
-            for rel_path, abs_path in find_module_build_artifacts(mod, build_dir):
-                dst = bundle_packages_dir / pkg_name / ".lake" / "build" / "lib" / "lean" / rel_path
-                _copy_file(abs_path, dst)
-                oleans_copied += 1
+    The student bundle only runs the LSP, which needs ``.olean`` / ``.ilean``
+    / ``.olean.server`` / ``.olean.private`` to load modules. The Lean IR
+    payloads (``*.ir`` files in ``build/lib/lean/``) are only needed for
+    native code generation.
 
-        source_dir = pkg_source_dirs.get(pkg_name)
-        if source_dir:
-            source_rel = module_to_relpath(mod)
-            src = source_dir / source_rel
-            if src.is_file():
-                dst = bundle_packages_dir / pkg_name / source_rel
-                _copy_file(src, dst)
-                sources_copied += 1
+    Only the ``*.ir`` payloads are removed. Three other pieces are **kept**
+    because deleting any of them makes Lake consider the target stale and
+    rebuild it on the next ``lake setup-file``, which would break the
+    Tier 2.5 "no rebuild in setup-file" guarantee:
 
-    return oleans_copied, sources_copied
+    * ``*.ir.hash`` sidecars — Lake's trace check reads these to validate
+      the recorded hash against the target's ``*.trace`` file.
+    * The ``.lake/build/ir/`` directory as a whole — Lake validates the
+      ``.c`` / ``.c.hash`` / ``.c.o.export`` / setup-json / trace files
+      under it even though they are only used for native compilation.
+    * The ``*.trace`` files themselves — rewriting them to drop the ``r``
+      output breaks a different freshness invariant and also triggers
+      rebuilds.
 
+    Separately, ``lake setup-file`` still lists ``.ir`` paths in its
+    ``importArts`` JSON and the Lean server reads them when started with
+    ``--setup``. To prevent "file not found" errors at LSP startup,
+    ``install_lake_wrapper`` replaces the ``lake`` binary with a wrapper
+    that strips ``.ir`` entries from ``setup-file`` output.
 
-def copy_package_configs(
-    packages_dir: Path,
-    bundle_packages_dir: Path,
-) -> None:
-    """Copy package configuration files (lakefile, lean-toolchain, etc.).
-
-    Lake needs these to load the workspace even with --no-build.
+    Returns ``(files_removed, bytes_freed)``.
     """
-    config_files = [
-        "lakefile.toml", "lakefile.lean", "lean-toolchain",
-        "lake-manifest.json", "lakefile",
-    ]
-    if not packages_dir.is_dir():
-        return
-    for pkg in sorted(packages_dir.iterdir()):
-        if not pkg.is_dir():
+    files_removed = 0
+    bytes_freed = 0
+
+    for lib_dir in bundle_project.rglob(".lake/build/lib/lean"):
+        if not lib_dir.is_dir():
             continue
-        dst_pkg = bundle_packages_dir / pkg.name
-        for cf in config_files:
-            src = pkg / cf
-            if src.is_file():
-                _copy_file(src, dst_pkg / cf)
+        for p in lib_dir.rglob("*.ir"):
+            if p.is_file() and not p.is_symlink():
+                try:
+                    bytes_freed += p.stat().st_size
+                    p.unlink()
+                    files_removed += 1
+                except FileNotFoundError:
+                    pass
+
+    return files_removed, bytes_freed
 
 
-def copy_package_extra_build_artifacts(
-    packages_dir: Path,
-    bundle_packages_dir: Path,
-) -> int:
-    """Copy non-lean build artifacts for packages (JS widgets, tarballs, etc.).
+_LAKE_WRAPPER_SH = r"""#!/bin/sh
+# Lake wrapper: strips .ir entries from `lake setup-file` output so the
+# Lean server doesn't try to read IR payloads that were pruned from the
+# bundle. For all other subcommands, passes through unchanged.
+REAL="$(dirname "$0")/lake.real"
+if [ "$1" = "setup-file" ]; then
+    "$REAL" "$@" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for arts in data.get('importArts', {}).values():
+        arts[:] = [a for a in arts if not a.endswith('.ir')]
+    json.dump(data, sys.stdout)
+except Exception:
+    sys.stdin.seek(0)
+    sys.stdout.write(sys.stdin.read())
+"
+else
+    exec "$REAL" "$@"
+fi
+"""
 
-    Some packages (e.g. proofwidgets) have build targets beyond lean modules:
-    compiled widget JS in build/js/, cached downloads like .tar.gz files, and
-    their associated .trace files. Lake's ``setup-file`` checks these targets
-    and will try to rebuild them if missing, causing errors in the bundle.
 
-    This copies the complete .lake/build/ tree (excluding lib/lean/ which is
-    handled separately by copy_pruned_oleans) and any .lake/*.trace files.
+def install_lake_wrapper(bundle_dir: Path, platform: str) -> None:
+    """Replace the bundle's ``lake`` binary with a wrapper that filters IR.
+
+    The real binary is renamed to ``lake.real``; a shell wrapper takes its
+    place and strips ``.ir`` entries from ``lake setup-file`` JSON output.
+    Only supported on Unix; callers should skip this on Windows.
     """
-    if not packages_dir.is_dir():
-        return 0
-
-    count = 0
-    for pkg in sorted(packages_dir.iterdir()):
-        if not pkg.is_dir():
-            continue
-        lake_dir = pkg / ".lake"
-        if not lake_dir.is_dir():
-            continue
-        dst_lake = bundle_packages_dir / pkg.name / ".lake"
-
-        # Copy non-lean build directories (e.g. build/js/, build/bin/)
-        build_dir = lake_dir / "build"
-        if build_dir.is_dir():
-            for sub in sorted(build_dir.iterdir()):
-                if sub.name == "lib":
-                    # lib/lean/ is handled by copy_pruned_oleans; skip
-                    continue
-                if sub.name == "ir":
-                    # IR files are optional and large; skip to save space
-                    continue
-                dst = dst_lake / "build" / sub.name
-                if sub.is_dir():
-                    shutil.copytree(sub, dst, symlinks=True, dirs_exist_ok=True)
-                else:
-                    _copy_file(sub, dst)
-                count += 1
-
-        # Copy .lake/ root artifacts (cached downloads + traces)
-        for f in sorted(lake_dir.iterdir()):
-            if f.is_file() and (f.suffix == ".trace" or f.name.endswith(".tar.gz")):
-                _copy_file(f, dst_lake / f.name)
-                count += 1
-
-        # Copy non-lean source directories referenced by Lake targets.
-        # e.g. proofwidgets has widget/ with TS sources that Lake validates.
-        # Without these, lake setup-file fails with "no such file or directory".
-        for item in sorted(pkg.iterdir()):
-            if not item.is_dir():
-                continue
-            dst = bundle_packages_dir / pkg.name / item.name
-            if dst.exists():
-                # Already copied (lean sources, .lake, etc.)
-                continue
-            if item.name.startswith(".") or item.name == "node_modules":
-                continue
-            shutil.copytree(
-                item, dst, symlinks=True, dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("node_modules"),
-            )
-            count += 1
-
-    return count
+    lake = bundle_dir / "lean" / "bin" / "lake"
+    lake_real = bundle_dir / "lean" / "bin" / "lake.real"
+    if lake.is_file():
+        lake.rename(lake_real)
+        lake.write_text(_LAKE_WRAPPER_SH)
+        lake.chmod(0o755)
 
 
 def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
@@ -517,30 +431,11 @@ def assemble_bundle(
     n_proj = copy_project_oleans(project_dir, bundle_project)
     print(f"  {n_proj} project olean files copied")
 
-    print("Computing import closure...")
-    toolchain_lib = bundle_dir / "lean" / "lib" / "lean"
-    dep_sources = compute_src_deps(project_dir)
-    print(f"  {len(dep_sources)} source files in transitive deps")
-
-    needed: set[str] = set()
-    module_to_pkg: dict[str, str] = {}
-    packages_dir = project_dir / ".lake" / "packages"
-
-    for src in dep_sources:
-        classified = classify_dep_source(src, project_dir, packages_dir, toolchain_lib)
-        if classified is None:
-            continue
-        mod, pkg_name = classified
-        needed.add(mod)
-        if pkg_name:
-            module_to_pkg[mod] = pkg_name
-
-    print(f"  {len(needed)} modules in transitive closure")
-
     # Copy the full .lake/ directory from the source project.
     # Lake's trace validation depends on the complete build artifact tree —
     # partial copies (even of build/lib/lean/ + build/ir/) cause hash
-    # mismatches that trigger full rebuilds (>600s).
+    # mismatches that trigger full rebuilds (>600s). IR artifacts are
+    # removed below after the in-bundle rebuild has updated the traces.
     print("Copying project .lake directory...")
     src_lake = project_dir / ".lake"
     dst_lake = bundle_project / ".lake"
@@ -596,6 +491,23 @@ def assemble_bundle(
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
+
+    # Strip Lean IR payloads from the .lake build tree. The LSP does not
+    # need them, and we can safely drop them without breaking Lake's trace
+    # freshness check (see prune_ir_from_bundle for why the .ir.hash
+    # sidecars, build/ir/, and .trace files all stay put).
+    # On Windows the lake wrapper mechanism is unreliable (the VS Code
+    # extension may invoke lake.exe directly, bypassing .cmd wrappers),
+    # so we skip IR pruning there.
+    if not platform.startswith("windows"):
+        print("Pruning Lean IR payloads from bundle...")
+        n_pruned, bytes_freed = prune_ir_from_bundle(bundle_project)
+        print(f"  {n_pruned} *.ir files removed ({bytes_freed / (1024 * 1024):.1f} MB freed)")
+        if n_pruned > 0:
+            print("Installing lake wrapper to strip .ir from setup-file output...")
+            install_lake_wrapper(bundle_dir, platform)
+    else:
+        print("Skipping IR pruning on Windows (lake wrapper not supported)")
 
     print("Installing launcher...")
     if platform.startswith("windows"):

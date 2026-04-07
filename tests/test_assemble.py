@@ -6,43 +6,73 @@ from pathlib import Path
 import json
 import pytest
 
-from assemble import classify_dep_source, setup_vscodium_portable
+from assemble import install_lake_wrapper, prune_ir_from_bundle, setup_vscodium_portable
 
 
-def test_classify_dep_source_package() -> None:
-    project_dir = Path("/tmp/project")
-    packages_dir = project_dir / ".lake" / "packages"
-    toolchain_lib = Path("/tmp/lean/lib/lean")
-    src = packages_dir / "mathlib" / "Mathlib" / "Data" / "Nat" / "Basic.lean"
+def test_prune_ir_from_bundle_removes_lean_ir_payloads(tmp_path: Path) -> None:
+    bundle_project = tmp_path / "project"
 
-    assert classify_dep_source(src, project_dir, packages_dir, toolchain_lib) == (
-        "Mathlib.Data.Nat.Basic",
-        "mathlib",
-    )
+    # Main project .lake tree with an .ir payload and its freshness sidecar.
+    lib_lean = bundle_project / ".lake" / "build" / "lib" / "lean"
+    lib_lean.mkdir(parents=True)
+    (lib_lean / "Mdd154.olean").write_bytes(b"olean")
+    (lib_lean / "Mdd154.ilean").write_bytes(b"ilean")
+    (lib_lean / "Mdd154.olean.private").write_bytes(b"private")
+    (lib_lean / "Mdd154.ir").write_bytes(b"x" * 1024)
+    (lib_lean / "Mdd154.ir.hash").write_bytes(b"h1")
+    (lib_lean / "Mdd154.trace").write_text("trace content")
+
+    # A package with a Lean IR payload under build/lib/lean/ and a native
+    # compilation intermediate directory under .lake/build/ir/.
+    pkg_lib = bundle_project / ".lake" / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib"
+    pkg_lib.mkdir(parents=True)
+    (pkg_lib / "Bar.olean").write_bytes(b"olean")
+    (pkg_lib / "Bar.ir").write_bytes(b"y" * 512)
+    (pkg_lib / "Bar.ir.hash").write_bytes(b"h2")
+    pkg_ir = bundle_project / ".lake" / "packages" / "mathlib" / ".lake" / "build" / "ir"
+    pkg_ir.mkdir(parents=True)
+    (pkg_ir / "Bar.c").write_bytes(b"z" * 4096)
+    (pkg_ir / "Bar.c.hash").write_bytes(b"hc")
+
+    n, freed = prune_ir_from_bundle(bundle_project)
+
+    # ``*.ir`` payloads are gone
+    assert not (lib_lean / "Mdd154.ir").exists()
+    assert not (pkg_lib / "Bar.ir").exists()
+
+    # Everything else — including the old-style build/ir/ tree, the
+    # .ir.hash sidecars, the olean facets, and the traces — is left alone
+    # so Lake's freshness check still considers the target up-to-date.
+    assert (lib_lean / "Mdd154.olean").exists()
+    assert (lib_lean / "Mdd154.ilean").exists()
+    assert (lib_lean / "Mdd154.olean.private").exists()
+    assert (lib_lean / "Mdd154.ir.hash").read_bytes() == b"h1"
+    assert (lib_lean / "Mdd154.trace").read_text() == "trace content"
+    assert (pkg_lib / "Bar.olean").exists()
+    assert (pkg_lib / "Bar.ir.hash").read_bytes() == b"h2"
+    assert (pkg_ir / "Bar.c").read_bytes() == b"z" * 4096
+    assert (pkg_ir / "Bar.c.hash").read_bytes() == b"hc"
+
+    # Counters reflect only the ``*.ir`` deletions.
+    assert n == 2
+    assert freed == 1024 + 512
 
 
-def test_classify_dep_source_toolchain() -> None:
-    project_dir = Path("/tmp/project")
-    packages_dir = project_dir / ".lake" / "packages"
-    toolchain_lib = Path("/tmp/lean/lib/lean")
-    src = toolchain_lib / "Std" / "Data" / "HashMap.lean"
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix wrapper only")
+def test_install_lake_wrapper_strips_ir(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    lake_bin = bundle_dir / "lean" / "bin"
+    lake_bin.mkdir(parents=True)
+    (lake_bin / "lake").write_text("#!/bin/sh\necho real")
+    (lake_bin / "lake").chmod(0o755)
 
-    assert classify_dep_source(src, project_dir, packages_dir, toolchain_lib) == (
-        "Std.Data.HashMap",
-        "_toolchain",
-    )
+    install_lake_wrapper(bundle_dir, "linux-x64")
 
-
-def test_classify_dep_source_project() -> None:
-    project_dir = Path("/tmp/project")
-    packages_dir = project_dir / ".lake" / "packages"
-    toolchain_lib = Path("/tmp/lean/lib/lean")
-    src = project_dir / "MyProject" / "Main.lean"
-
-    assert classify_dep_source(src, project_dir, packages_dir, toolchain_lib) == (
-        "MyProject.Main",
-        None,
-    )
+    assert (lake_bin / "lake.real").exists()
+    assert (lake_bin / "lake").exists()
+    wrapper_text = (lake_bin / "lake").read_text()
+    assert "setup-file" in wrapper_text
+    assert "lake.real" in wrapper_text
 
 
 def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
