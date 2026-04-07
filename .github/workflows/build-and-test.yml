@@ -78,6 +78,11 @@ jobs:
           curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
+      - name: Install mingw-w64 (for git.exe shim cross-build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
       - name: Build Windows bundle
         run: |
           python bundle.py "$REPO_URL" \

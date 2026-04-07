@@ -10,7 +10,12 @@
 
 - **Extension git check suppression**
   ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
-  Would let us drop MinGit (~46MB) from the bundle entirely.
+  Would let us retire the Windows `git.exe` shim (`shim/git_shim.c`). Note
+  that VS Code's built-in git extension *also* probes `git --version` and
+  `git rev-parse --show-toplevel` at workspace activation, so even after
+  the lean4 extension stops probing, the shim (or an explicit
+  `"git.enabled": false` in `settings.json`) is still needed to keep the
+  SCM sidebar quiet.
 
 ## Bundle size optimization
 
@@ -23,13 +28,3 @@
   instead of returning the import artifact JSON. The size win is
   negligible and the failure mode is the exact broken-infoview scenario
   [`test_lake_setup_file_offline`](tests/test_offline.py) guards against.
-- **Git shim instead of MinGit (Windows, saves ~46 MB).** The lean4 VS Code
-  extension checks for `git` on PATH at startup and blocks the language server
-  if it's missing. But Lake's git operations are already neutralized by
-  rewriting manifests to path deps, so no real git functionality is needed at
-  runtime. A tiny shim binary (a few KB) that responds to the extension's
-  probe commands (`git --version`, `git rev-parse`, etc.) with plausible
-  canned responses could replace the full 46 MB MinGit. This is roughly a
-  **15–20% reduction** in total bundle size (MinGit is ~46 MB out of a
-  ~250–300 MB bundle). Unlike the upstream suppression approach, this
-  requires no extension changes and can be implemented immediately.

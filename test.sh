@@ -42,7 +42,7 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "=== Python unit tests ==="
-python3 -m pytest tests/test_assemble.py tests/test_import_closure.py -v || true
+python3 -m pytest tests/test_assemble.py tests/test_import_closure.py tests/test_git_shim.py -v || true
 
 echo ""
 echo "=== Tier 1: Bundle structure ==="

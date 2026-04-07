@@ -46,7 +46,8 @@ This produces `MDD154-bundle-windows.zip` containing:
 
 - **VSCodium** (portable mode) with the lean4 extension pre-installed
 - **Lean 4** toolchain (trimmed to essentials)
-- **MinGit** (minimal git for Windows, needed by the lean4 extension)
+- A tiny **`git.exe` shim** (~10 KB) to satisfy the lean4 and built-in
+  git extensions' startup probes without shipping a full git install
 - The **project source files**
 - **Only the oleans transitively needed** by the project (not all of Mathlib)
 
@@ -57,6 +58,10 @@ This produces `MDD154-bundle-windows.zip` containing:
 - [elan](https://github.com/leanprover/elan) with the project's Lean toolchain
 - Lean 4.17+ (for `lean --src-deps`)
 - Network access (to download components and mathlib cache)
+- A C compiler able to produce 64-bit Windows PE binaries **when
+  building Windows bundles** (mingw-w64 is recommended;
+  `apt-get install gcc-mingw-w64-x86-64` on Debian/Ubuntu). Zig or native
+  `gcc`/`clang` on a Windows build host also work.
 
 Students need none of these.
 
@@ -139,12 +144,19 @@ python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --
 
 ## Known issues
 
-- **MinGit is bundled as a workaround.** The lean4 VS Code extension checks
-  for git at startup and blocks the language server if it's missing. We bundle
-  MinGit (~46MB) to satisfy this check, even though the bundle doesn't need git
-  at runtime. This can be removed once the extension provides a way to suppress
-  the dependency check
-  ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347)).
+- **Git shim on Windows.** The lean4 VS Code extension and VS Code's
+  built-in git extension both probe for `git` on PATH at startup. Rather
+  than shipping the full 46 MB MinGit distribution, the bundle includes a
+  ~10 KB C shim at `git/cmd/git.exe` that answers only the two probes
+  both extensions make at activation: `git --version` (returns
+  `git version 2.47.0`) and `git rev-parse --show-toplevel` (returns
+  "not a git repository"). Lake's own git calls are optional fallbacks
+  (`captureProc?`/`testProc`) and also tolerate the shim's non-zero
+  exits. Source: `shim/git_shim.c`. This can be retired entirely once
+  the lean4 extension provides a way to suppress its git check
+  ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347))
+  *and* VS Code's built-in git extension is disabled via settings.json
+  — whichever probe comes last determines whether the shim stays.
 
 - **Dep rewriting for offline use.** We rewrite `lake-manifest.json` and
   `lakefile.toml`/`lakefile.lean` to convert git dependencies to path
@@ -158,7 +170,7 @@ Several component versions are hardcoded and need periodic bumps:
 
 | Component | Where | Notes |
 |-----------|-------|-------|
-| MinGit | `download.py` `MINGIT_VERSION` | Windows only |
+| git shim version string | `shim/git_shim.c` (`VERSION_LINE`) | Must be >= 2.0.0, not 2.25.x/2.26.x |
 | even-better-toml extension | `download.py` `ALLOWED_EXTENSION_DEPS` | ID + version |
 | elan installer | `.github/workflows/build-and-test.yml` | Tag in curl URL |
 | GitHub Actions (checkout, setup-python, etc.) | `.github/workflows/build-and-test.yml` | Pinned by commit SHA |

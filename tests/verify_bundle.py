@@ -87,6 +87,41 @@ def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
     if is_windows:
         if not (bundle_root / "lean" / "bin" / "libleanshared.dll").is_file():
             errors.append("Missing critical DLL: lean/bin/libleanshared.dll")
+
+        # git shim: must be at git/cmd/git.exe so the launcher's PATH entry
+        # resolves. We don't try to execute it here (Tier 1 runs on Linux too),
+        # but we verify it is a real Windows PE image: the DOS header must
+        # start with "MZ" and the PE header at the offset stored at 0x3C
+        # must begin with "PE\0\0". This catches native compilers that
+        # silently produce ELF/Mach-O binaries with a .exe name.
+        git_shim = bundle_root / "git" / "cmd" / "git.exe"
+        if not git_shim.is_file():
+            errors.append("Missing git shim: git/cmd/git.exe")
+        else:
+            with open(git_shim, "rb") as f:
+                dos = f.read(0x40)
+            if len(dos) < 0x40 or dos[:2] != b"MZ":
+                errors.append(
+                    f"git/cmd/git.exe is not a PE image (DOS magic: {dos[:4]!r})"
+                )
+            else:
+                e_lfanew = int.from_bytes(dos[0x3C:0x40], "little")
+                with open(git_shim, "rb") as f:
+                    f.seek(e_lfanew)
+                    pe_sig = f.read(4)
+                if pe_sig != b"PE\x00\x00":
+                    errors.append(
+                        f"git/cmd/git.exe has bad PE signature at 0x{e_lfanew:X}: "
+                        f"{pe_sig!r}"
+                    )
+            # Shim must be tiny — anything above ~200 KB means MinGit
+            # crept back in.
+            size = git_shim.stat().st_size
+            if size > 256 * 1024:
+                errors.append(
+                    f"git/cmd/git.exe is too large ({size} bytes); "
+                    f"expected <256 KB for the shim"
+                )
     elif platform.startswith("darwin"):
         if not (bundle_root / "lean" / "lib" / "lean" / "libleanshared.dylib").is_file():
             errors.append("Missing critical dylib: lean/lib/lean/libleanshared.dylib")
