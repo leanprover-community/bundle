@@ -273,8 +273,13 @@ def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
 def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
     """Rewrite lakefile.lean git deps to path deps.
 
-    Handles the Lean DSL syntax: ``require foo from git "url" @ "rev"``
-    → ``require foo from ".lake/packages/foo"``
+    Handles all three ``require`` name forms:
+
+    * bare:      ``require foo from git "url" @ "rev"``
+    * quoted:    ``require "foo" from git "url" @ "rev"``
+    * guillemet: ``require «foo-bar» from git "url" @ "rev"``
+
+    Each is rewritten to ``require <name> from ".lake/packages/<name>"``.
     """
     lakefile = bundle_project / "lakefile.lean"
     if not lakefile.is_file():
@@ -283,11 +288,18 @@ def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
     import re
     text = lakefile.read_text()
     # Match: require <name> from git "url" [@ "rev"]
-    pattern = r'(require\s+(\w+)\s+)from\s+git\s+"[^"]*"(\s*@\s*"[^"]*")?'
+    # <name> can be: bare word, "quoted", or «guillemet»
+    # Anchored to start-of-line (with optional leading whitespace) to avoid
+    # rewriting commented-out lines or partial identifier matches.
+    pattern = (
+        r'(?m)^(\s*require\s+'
+        r'(?:"([^"]+)"|«([^»]+)»|(\w+))'
+        r'\s+)from\s+git\s+"[^"]*"(\s*@\s*"[^"]*")?'
+    )
 
     def replace_dep(m):
         prefix = m.group(1)
-        name = m.group(2)
+        name = m.group(2) or m.group(3) or m.group(4)
         return f'{prefix}from ".lake/packages/{name}"'
 
     new_text = re.sub(pattern, replace_dep, text)

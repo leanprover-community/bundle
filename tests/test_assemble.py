@@ -6,7 +6,12 @@ from pathlib import Path
 import json
 import pytest
 
-from assemble import install_lake_wrapper, prune_ir_from_bundle, setup_vscodium_portable
+from assemble import (
+    _rewrite_lakefile_lean_deps,
+    install_lake_wrapper,
+    prune_ir_from_bundle,
+    setup_vscodium_portable,
+)
 
 
 def test_prune_ir_from_bundle_removes_lean_ir_payloads(tmp_path: Path) -> None:
@@ -92,6 +97,64 @@ def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
     ext_dest = vscodium_dir / "data" / "extensions" / extension_dir.name
     assert (ext_dest / "package.json").is_file()
     assert not (ext_dest / "extension" / "package.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Lakefile.lean rewriting: bare, quoted, and guillemet require syntax
+# ---------------------------------------------------------------------------
+
+class TestRewriteLakefileLeanDeps:
+    """Test _rewrite_lakefile_lean_deps handles all require name forms."""
+
+    def test_bare_require(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        lakefile.write_text('require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n')
+        _rewrite_lakefile_lean_deps(tmp_path)
+        assert lakefile.read_text() == 'require mathlib from ".lake/packages/mathlib"\n'
+
+    def test_quoted_require(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        lakefile.write_text('require "mathlib" from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n')
+        _rewrite_lakefile_lean_deps(tmp_path)
+        assert lakefile.read_text() == 'require "mathlib" from ".lake/packages/mathlib"\n'
+
+    def test_guillemet_require(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        lakefile.write_text('require «doc-gen4» from git "https://github.com/leanprover/doc-gen4" @ "main"\n')
+        _rewrite_lakefile_lean_deps(tmp_path)
+        assert lakefile.read_text() == 'require «doc-gen4» from ".lake/packages/doc-gen4"\n'
+
+    def test_no_rev(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        lakefile.write_text('require mathlib from git "https://github.com/leanprover-community/mathlib4"\n')
+        _rewrite_lakefile_lean_deps(tmp_path)
+        assert lakefile.read_text() == 'require mathlib from ".lake/packages/mathlib"\n'
+
+    def test_multiple_deps(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        lakefile.write_text(
+            'require "mathlib" from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n'
+            'require «doc-gen4» from git "https://github.com/leanprover/doc-gen4" @ "main"\n'
+            'require aesop from git "https://github.com/leanprover-community/aesop"\n'
+        )
+        _rewrite_lakefile_lean_deps(tmp_path)
+        expected = (
+            'require "mathlib" from ".lake/packages/mathlib"\n'
+            'require «doc-gen4» from ".lake/packages/doc-gen4"\n'
+            'require aesop from ".lake/packages/aesop"\n'
+        )
+        assert lakefile.read_text() == expected
+
+    def test_commented_out_require_not_rewritten(self, tmp_path: Path) -> None:
+        lakefile = tmp_path / "lakefile.lean"
+        original = '-- require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n'
+        lakefile.write_text(original)
+        _rewrite_lakefile_lean_deps(tmp_path)
+        assert lakefile.read_text() == original
+
+    def test_no_lakefile(self, tmp_path: Path) -> None:
+        """No crash when lakefile.lean doesn't exist."""
+        _rewrite_lakefile_lean_deps(tmp_path)
 
 
 # ---------------------------------------------------------------------------
