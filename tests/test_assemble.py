@@ -9,6 +9,7 @@ import pytest
 
 from assemble import (
     _rewrite_lakefile_lean_deps,
+    _rewrite_lakefile_toml_deps,
     install_lake_wrapper,
     prune_ir_from_bundle,
     setup_vscodium_portable,
@@ -228,6 +229,133 @@ class TestRewriteLakefileLeanDeps:
     def test_no_lakefile(self, tmp_path: Path) -> None:
         """No crash when lakefile.lean doesn't exist."""
         _rewrite_lakefile_lean_deps(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Lakefile TOML rewriting (issue #23)
+# ---------------------------------------------------------------------------
+
+
+class TestRewriteLakefileTomlDeps:
+    """Test _rewrite_lakefile_toml_deps handles all dep forms."""
+
+    def test_standard_git_rev(self, tmp_path: Path) -> None:
+        """Standard case: name immediately followed by git + rev."""
+        (tmp_path / "lakefile.toml").write_text(
+            '[[require]]\nname = "mathlib"\n'
+            'git = "https://github.com/leanprover-community/mathlib4"\n'
+            'rev = "main"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert "git" not in result
+        assert "rev" not in result
+
+    def test_scope_branch_no_git(self, tmp_path: Path) -> None:
+        """Pattern 1: scope + branch with no explicit git key."""
+        (tmp_path / "lakefile.toml").write_text(
+            '[[require]]\nname = "mathlib"\n'
+            'scope = "leanprover-community"\n'
+            'branch = "master"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert "scope" not in result
+        assert "branch" not in result
+
+    def test_git_not_immediately_after_name(self, tmp_path: Path) -> None:
+        """Pattern 2: scope between name and git."""
+        (tmp_path / "lakefile.toml").write_text(
+            '[[require]]\nname = "mathlib"\n'
+            'scope = "leanprover-community"\n'
+            'git = "https://github.com/leanprover-community/mathlib4"\n'
+            'rev = "main"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert "git" not in result
+        assert "scope" not in result
+        assert "rev" not in result
+
+    def test_git_before_name(self, tmp_path: Path) -> None:
+        """Pattern 3: git key appears before name."""
+        (tmp_path / "lakefile.toml").write_text(
+            "[[require]]\n"
+            'git = "https://github.com/leanprover-community/mathlib4"\n'
+            'name = "mathlib"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert "git" not in result
+
+    def test_multiple_deps(self, tmp_path: Path) -> None:
+        """Multiple deps: one git, one scope+branch, one path (untouched)."""
+        (tmp_path / "lakefile.toml").write_text(
+            '[[require]]\nname = "mathlib"\n'
+            'git = "https://github.com/leanprover-community/mathlib4"\n'
+            'rev = "v4.0.0"\n'
+            "\n"
+            '[[require]]\nname = "aesop"\n'
+            'scope = "leanprover-community"\n'
+            'branch = "master"\n'
+            "\n"
+            '[[require]]\nname = "local_dep"\n'
+            'path = "./my_dep"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert 'path = ".lake/packages/aesop"' in result
+        # The local path dep should be unchanged
+        assert 'path = "./my_dep"' in result
+
+    def test_no_lakefile(self, tmp_path: Path) -> None:
+        """No lakefile.toml present — should be a no-op."""
+        _rewrite_lakefile_toml_deps(tmp_path)  # should not raise
+
+    def test_no_require_section(self, tmp_path: Path) -> None:
+        """Lakefile with no [[require]] — should be a no-op."""
+        (tmp_path / "lakefile.toml").write_text('[package]\nname = "foo"\n')
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert result == '[package]\nname = "foo"\n'
+
+    def test_comment_before_name(self, tmp_path: Path) -> None:
+        """A commented-out name line should not confuse the name extraction."""
+        (tmp_path / "lakefile.toml").write_text(
+            "[[require]]\n"
+            '# name = "old"\n'
+            'name = "mathlib"\n'
+            'git = "https://github.com/leanprover-community/mathlib4"\n'
+            'rev = "main"\n'
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert '# name = "old"' in result
+        assert "git" not in result.replace("# name", "")
+
+    def test_preserves_other_content(self, tmp_path: Path) -> None:
+        """Non-require sections and comments are preserved."""
+        (tmp_path / "lakefile.toml").write_text(
+            '[package]\nname = "myproject"\nversion = "0.1"\n\n'
+            "# A dependency\n"
+            '[[require]]\nname = "mathlib"\n'
+            'scope = "leanprover-community"\n'
+            'branch = "master"\n\n'
+            "[leanOptions]\npp.unicode = true\n"
+        )
+        _rewrite_lakefile_toml_deps(tmp_path)
+        result = (tmp_path / "lakefile.toml").read_text()
+        assert 'name = "myproject"' in result
+        assert "version" in result
+        assert "# A dependency" in result
+        assert 'path = ".lake/packages/mathlib"' in result
+        assert "pp.unicode" in result
 
 
 # ---------------------------------------------------------------------------
