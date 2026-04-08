@@ -214,8 +214,8 @@ export async function launchVSCodium(options?: {
 export async function closeVSCodium(result: LaunchResult) {
     try { await result.browser.close(); } catch { /* ignore */ }
     try { result.process.kill(); } catch { /* ignore */ }
-    // On Windows the spawned process is cmd.exe, not VSCodium itself.
-    // Killing cmd may not terminate the child, so use taskkill as fallback.
+    // On Windows the launcher uses `start` to detach VSCodium, so cmd.exe
+    // exits immediately. Use taskkill to terminate VSCodium directly.
     if (process.platform === 'win32') {
         try { childProcess.execSync('taskkill /f /im VSCodium.exe 2>nul', { stdio: 'ignore' }); } catch { /* */ }
     }

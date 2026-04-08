@@ -20,6 +20,8 @@ for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
 )
 
 :: Launch VSCodium with the project folder
-:: Invoke directly (not via `start`) so the process inherits our environment
-:: and the caller can control the child process. Forward extra args via %*.
-"%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
+:: Use `start` so the Command Prompt window closes immediately instead of
+:: staying open for the entire VSCodium session. The empty "" is required
+:: as the window-title argument (otherwise `start` treats the quoted path
+:: as the title). Environment variables set above are inherited by `start`.
+start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
