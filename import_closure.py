@@ -71,6 +71,64 @@ def module_build_artifact_prefix(mod: str) -> str:
     return str(Path(*mod.split(".")))
 
 
+def src_paths_to_module_stems(
+    needed_srcs: set[Path],
+    project_dir: Path,
+) -> set[str]:
+    """Convert source file paths to module stems for build artifact filtering.
+
+    A module stem is the slash-separated path relative to its package
+    (or project) root without the ``.lean`` extension.
+    E.g. ``Mathlib/Algebra/Group/Basic``.
+
+    These stems match the relative paths of build artifacts under
+    ``build/lib/lean/`` directories.
+
+    *needed_srcs* should come from :func:`compute_src_deps` (transitive
+    dependencies only). The project's own modules are discovered by
+    scanning *project_dir* for ``.lean`` files outside ``.lake/``.
+
+    .. note:: This assumes the standard Lean project layout where source
+       paths directly mirror module names. If a package uses Lake's
+       ``srcDir`` option the computed stems will be wrong. Callers should
+       validate the result against actual build artifacts.
+    """
+    project_dir = project_dir.resolve()
+    lake_packages = project_dir / ".lake" / "packages"
+    stems: set[str] = set()
+
+    # Include the project's own modules (always needed).
+    for lean_file in project_dir.rglob("*.lean"):
+        try:
+            rel = lean_file.relative_to(project_dir)
+        except ValueError:
+            continue
+        if ".lake" in rel.parts:
+            continue
+        stems.add(str(rel.with_suffix("")))
+
+    # Include dependency modules from the import closure.
+    for src in needed_srcs:
+        src = src.resolve()
+        if not str(src).endswith(".lean"):
+            continue
+        # Package source: .lake/packages/<pkg>/<module_path>.lean
+        try:
+            rel = src.relative_to(lake_packages)
+            parts = rel.parts
+            if len(parts) >= 2:
+                # parts[0] is the package name, rest is the module path
+                stems.add(str(Path(*parts[1:]).with_suffix("")))
+            continue
+        except ValueError:
+            pass
+        # Project source already handled above; toolchain sources
+        # (e.g. Init/Prelude.lean under ~/.elan/) live outside .lake/
+        # and are copied with the lean toolchain directory, not here.
+
+    return stems
+
+
 def find_module_build_artifacts(mod: str, build_dir: Path) -> list[tuple[str, Path]]:
     """Find all build artifacts for a module in a build directory.
 

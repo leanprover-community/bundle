@@ -5,12 +5,11 @@ Usage:
     python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows
 
 This will:
-1. Clone the project
+1. Clone the project and build it (fetching mathlib cache)
 2. Download Lean, VSCodium, and the lean4 extension
-3. Build the project and fetch cached oleans
-4. Compute the transitive import closure
-5. Assemble a bundle with only the needed oleans
-6. Package it into a zip file
+3. Compute the transitive import closure (via ``lean --src-deps``)
+4. Assemble a bundle containing only the needed oleans
+5. Package it into a zip file
 """
 
 import argparse
@@ -26,6 +25,7 @@ import zipfile
 from pathlib import Path
 
 from assemble import assemble_bundle
+from import_closure import compute_src_deps, src_paths_to_module_stems
 from download import (
     PLATFORM_MAP,
     build_git_shim,
@@ -208,6 +208,36 @@ def main() -> None:
         print("\n--- Trimming lean toolchain ---")
         trim_lean_toolchain(lean_dir, args.platform)
 
+        print("\n--- Computing import closure ---")
+        needed_stems: set[str] | None = None
+        try:
+            needed_srcs = compute_src_deps(project_dir)
+            needed_stems = src_paths_to_module_stems(needed_srcs, project_dir)
+            print(f"  {len(needed_stems)} modules in transitive closure")
+        except Exception as e:
+            print(f"  Warning: could not compute import closure: {e}")
+            print("  Falling back to copying all build artifacts")
+
+        # Sanity-check: verify that at least one computed stem corresponds
+        # to an actual .olean file.  If a package uses Lake's srcDir option
+        # the source→stem mapping is wrong and we must fall back to a full
+        # copy rather than silently dropping needed modules.
+        if needed_stems:
+            verified = False
+            for bldir in (project_dir / ".lake").rglob("build/lib/lean"):
+                if not bldir.is_dir():
+                    continue
+                for stem in needed_stems:
+                    if (bldir / stem).with_suffix(".olean").is_file():
+                        verified = True
+                        break
+                if verified:
+                    break
+            if not verified:
+                print("  Warning: computed stems don't match any build artifacts")
+                print("  Falling back to copying all build artifacts")
+                needed_stems = None
+
         print("\n--- Assembling bundle ---")
         bundle_dir = work_dir / f"{project_name}-bundle"
         assemble_bundle(
@@ -220,6 +250,7 @@ def main() -> None:
             bundle_dir=bundle_dir,
             platform=args.platform,
             extra_include=args.include,
+            needed_stems=needed_stems,
         )
 
         # Write bundle manifest for reproducibility

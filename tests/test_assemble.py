@@ -8,8 +8,10 @@ import json
 import pytest
 
 from assemble import (
+    _module_stem_from_build_path,
     _rewrite_lakefile_lean_deps,
     _rewrite_lakefile_toml_deps,
+    copy_lake_selective,
     install_lake_wrapper,
     prune_ir_from_bundle,
     setup_vscodium_portable,
@@ -25,6 +27,106 @@ def test_no_zip_without_work_dir_is_rejected() -> None:
     )
     assert result.returncode == 2
     assert "--no-zip requires --work-dir" in result.stderr
+
+
+class TestModuleStemFromBuildPath:
+    def test_build_lib_lean_olean(self):
+        parts = ("build", "lib", "lean", "Mathlib", "Algebra", "Group", "Basic.olean")
+        assert _module_stem_from_build_path(parts) == "Mathlib/Algebra/Group/Basic"
+
+    def test_build_lib_lean_multi_extension(self):
+        parts = ("build", "lib", "lean", "Mathlib", "Foo.olean.private")
+        assert _module_stem_from_build_path(parts) == "Mathlib/Foo"
+
+    def test_build_lib_lean_ir_hash(self):
+        parts = ("build", "lib", "lean", "Mathlib", "Foo.ir.hash")
+        assert _module_stem_from_build_path(parts) == "Mathlib/Foo"
+
+    def test_build_ir(self):
+        parts = ("build", "ir", "Mathlib", "Foo.c")
+        assert _module_stem_from_build_path(parts) == "Mathlib/Foo"
+
+    def test_packages_nested(self):
+        parts = ("packages", "mathlib", ".lake", "build", "lib", "lean", "Mathlib", "Foo.olean")
+        assert _module_stem_from_build_path(parts) == "Mathlib/Foo"
+
+    def test_no_build_marker(self):
+        parts = ("packages", "mathlib", "Mathlib", "Foo.lean")
+        assert _module_stem_from_build_path(parts) is None
+
+    def test_config_file(self):
+        parts = ("packages", "mathlib", "lakefile.lean")
+        assert _module_stem_from_build_path(parts) is None
+
+    def test_root_module(self):
+        parts = ("build", "lib", "lean", "Mathlib.olean")
+        assert _module_stem_from_build_path(parts) == "Mathlib"
+
+
+class TestCopyLakeSelective:
+    def _make_lake(self, tmp_path: Path) -> Path:
+        """Create a fake .lake/ tree with build artifacts for two modules."""
+        lake = tmp_path / "src" / ".lake"
+
+        # Project build artifacts
+        proj_build = lake / "build" / "lib" / "lean"
+        (proj_build / "MyProject").mkdir(parents=True)
+        (proj_build / "MyProject" / "Needed.olean").write_bytes(b"n1")
+        (proj_build / "MyProject" / "Needed.ilean").write_bytes(b"n2")
+        (proj_build / "MyProject" / "Unneeded.olean").write_bytes(b"u1")
+
+        # Dep build artifacts
+        pkg_build = lake / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean"
+        (pkg_build / "Mathlib" / "Used").mkdir(parents=True)
+        (pkg_build / "Mathlib" / "Used" / "Mod.olean").write_bytes(b"m1")
+        (pkg_build / "Mathlib" / "Unused").mkdir(parents=True)
+        (pkg_build / "Mathlib" / "Unused" / "Big.olean").write_bytes(b"b1")
+
+        # Infrastructure (always copied)
+        (lake / "packages" / "mathlib" / "lakefile.lean").write_text("lakefile")
+        (lake / "packages" / "mathlib" / "lean-toolchain").write_text("v4.17.0")
+
+        return lake
+
+    def test_none_copies_everything(self, tmp_path: Path):
+        lake = self._make_lake(tmp_path)
+        dst = tmp_path / "dst" / ".lake"
+        n_copied, n_skipped = copy_lake_selective(lake, dst, None)
+        assert n_skipped == 0
+        assert (dst / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib" / "Unused" / "Big.olean").exists()
+
+    def test_selective_prunes_unneeded(self, tmp_path: Path):
+        lake = self._make_lake(tmp_path)
+        dst = tmp_path / "dst" / ".lake"
+        needed = {"MyProject/Needed", "Mathlib/Used/Mod"}
+        n_copied, n_skipped = copy_lake_selective(lake, dst, needed)
+
+        # Needed artifacts present
+        assert (dst / "build" / "lib" / "lean" / "MyProject" / "Needed.olean").exists()
+        assert (dst / "build" / "lib" / "lean" / "MyProject" / "Needed.ilean").exists()
+        assert (dst / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib" / "Used" / "Mod.olean").exists()
+
+        # Unneeded artifacts pruned
+        assert not (dst / "build" / "lib" / "lean" / "MyProject" / "Unneeded.olean").exists()
+        assert not (dst / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib" / "Unused" / "Big.olean").exists()
+
+        # Infrastructure always copied
+        assert (dst / "packages" / "mathlib" / "lakefile.lean").exists()
+        assert (dst / "packages" / "mathlib" / "lean-toolchain").exists()
+
+        assert n_skipped > 0
+
+    def test_directory_pruning(self, tmp_path: Path):
+        """Entire directories are skipped when no needed stem has a matching prefix."""
+        lake = self._make_lake(tmp_path)
+        dst = tmp_path / "dst" / ".lake"
+        # Only need project module; all Mathlib build dirs should be skipped
+        needed = {"MyProject/Needed"}
+        copy_lake_selective(lake, dst, needed)
+
+        # The Mathlib build directory tree should not exist
+        mathlib_build = dst / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib"
+        assert not mathlib_build.exists()
 
 
 def test_prune_ir_from_bundle_removes_lean_ir_payloads(tmp_path: Path) -> None:
