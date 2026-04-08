@@ -674,6 +674,9 @@ def assemble_bundle(
     if platform.startswith("windows"):
         launcher_src = templates_dir / "start_lean.cmd"
         launcher_dst = bundle_dir / "Start_Lean.cmd"
+    elif platform.startswith("darwin"):
+        launcher_src = templates_dir / "start_lean.sh"
+        launcher_dst = bundle_dir / "Start_Lean.command"
     else:
         launcher_src = templates_dir / "start_lean.sh"
         launcher_dst = bundle_dir / "Start_Lean.sh"

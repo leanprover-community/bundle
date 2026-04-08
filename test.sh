@@ -5,7 +5,7 @@
 #   ./test-local.sh /path/to/bundle-root
 #   BUNDLE_ROOT=/path/to/bundle-root ./test-local.sh
 #
-# The bundle root should contain: lean/, vscodium/, project/, Start_Lean.sh
+# The bundle root should contain: lean/, vscodium/, project/, Start_Lean.{sh,command,cmd}
 #
 # Tests run:
 #   - Python unit tests (no bundle needed)
@@ -19,7 +19,7 @@ BUNDLE_ROOT="${1:-${BUNDLE_ROOT:-}}"
 
 if [ -z "$BUNDLE_ROOT" ]; then
     for candidate in /tmp/bundle-local/*-bundle /tmp/bundle-fix*/*-bundle /tmp/bundle-rebuild/*-bundle; do
-        if [ -f "$candidate/Start_Lean.sh" ] 2>/dev/null || [ -f "$candidate/Start_Lean.cmd" ] 2>/dev/null; then
+        if [ -f "$candidate/Start_Lean.sh" ] 2>/dev/null || [ -f "$candidate/Start_Lean.command" ] 2>/dev/null || [ -f "$candidate/Start_Lean.cmd" ] 2>/dev/null; then
             BUNDLE_ROOT="$candidate"
             break
         fi

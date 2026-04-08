@@ -5,12 +5,13 @@ import { chromium, Browser, Page } from 'playwright';
 
 function findLauncherScript(bundleRoot: string): string {
     const isWindows = process.platform === 'win32';
-    const ext = isWindows ? '.cmd' : '.sh';
-    for (const name of [`Start_Lean${ext}`, `start_lean${ext}`]) {
+    const isMac = process.platform === 'darwin';
+    const exts = isWindows ? ['.cmd'] : isMac ? ['.command', '.sh'] : ['.sh'];
+    for (const ext of exts) for (const name of [`Start_Lean${ext}`, `start_lean${ext}`]) {
         const p = path.join(bundleRoot, name);
         if (fs.existsSync(p)) return p;
     }
-    throw new Error(`No launcher script (*${ext}) found in ${bundleRoot}`);
+    throw new Error(`No launcher script found in ${bundleRoot}`);
 }
 
 export interface LaunchResult {

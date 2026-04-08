@@ -266,8 +266,9 @@ class TestBundleLauncherUnix:
     @pytest.fixture()
     def result(self) -> dict[str, str]:
         bundle_root = Path(BUNDLE_ROOT)
-        launcher = _find_bundle_launcher(BUNDLE_ROOT, ".sh")
-        assert launcher, f"No .sh launcher found in {BUNDLE_ROOT}"
+        launcher = _find_bundle_launcher(BUNDLE_ROOT, ".command") or \
+            _find_bundle_launcher(BUNDLE_ROOT, ".sh")
+        assert launcher, f"No .command/.sh launcher found in {BUNDLE_ROOT}"
         patched = bundle_root / "_test_launcher.sh"
         try:
             _patch_unix_launcher(launcher, patched)
