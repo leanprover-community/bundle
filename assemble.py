@@ -668,11 +668,6 @@ def assemble_bundle(
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
 
-    # Ensure oleans are strictly newer than sources so Lake's timestamp
-    # check doesn't consider them out-of-date after copy/zip/unzip.
-    print("Fixing olean timestamps...")
-    _touch_oleans(bundle_project)
-
     # Rebuild the project's own modules inside the assembled bundle.
     # This ensures the project's build traces are valid for the bundle's
     # workspace configuration. Only the project's own modules need
@@ -712,6 +707,11 @@ def assemble_bundle(
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
+
+    # Touch oleans AFTER the rebuild so they're strictly newer than any
+    # source files or trace files the rebuild may have updated.
+    print("Fixing olean timestamps...")
+    _touch_oleans(bundle_project)
 
     # Strip Lean IR payloads from the .lake build tree. The LSP does not
     # need them, and we can safely drop them without breaking Lake's trace
