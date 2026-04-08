@@ -143,14 +143,14 @@ REAL="$(dirname "$0")/lake.real"
 if [ "$1" = "setup-file" ]; then
     "$REAL" "$@" | python3 -c "
 import sys, json
+raw = sys.stdin.buffer.read()
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(raw)
     for arts in data.get('importArts', {}).values():
         arts[:] = [a for a in arts if not a.endswith('.ir')]
     json.dump(data, sys.stdout)
 except Exception:
-    sys.stdin.seek(0)
-    sys.stdout.write(sys.stdin.read())
+    sys.stdout.buffer.write(raw)
 "
 else
     exec "$REAL" "$@"

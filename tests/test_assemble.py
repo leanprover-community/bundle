@@ -75,6 +75,67 @@ def test_install_lake_wrapper_strips_ir(tmp_path: Path) -> None:
     assert "lake.real" in wrapper_text
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix wrapper only")
+class TestLakeWrapperIntegration:
+    """Integration tests that install the wrapper and run it end-to-end."""
+
+    @staticmethod
+    def _make_fake_lake(lake_bin: Path, output: str) -> None:
+        """Create a fake lake.real that echoes *output* for ``setup-file``."""
+        lake_bin.mkdir(parents=True)
+        # The wrapper renames lake → lake.real, so we write lake first.
+        script = "#!/bin/sh\n" + f'printf %s \'{output}\'\n'
+        (lake_bin / "lake").write_text(script)
+        (lake_bin / "lake").chmod(0o755)
+
+    def test_strips_ir_entries(self, tmp_path: Path) -> None:
+        import subprocess
+        bundle_dir = tmp_path / "bundle"
+        lake_bin = bundle_dir / "lean" / "bin"
+        payload = json.dumps({"importArts": {"Foo": ["Foo.olean", "Foo.ir"]}})
+        self._make_fake_lake(lake_bin, payload)
+        install_lake_wrapper(bundle_dir, "linux-x64")
+
+        result = subprocess.run(
+            [str(lake_bin / "lake"), "setup-file", "Foo.lean"],
+            capture_output=True, timeout=5,
+        )
+        assert result.returncode == 0
+        output = json.loads(result.stdout)
+        assert output["importArts"]["Foo"] == ["Foo.olean"]
+
+    def test_fallback_passes_through_non_json(self, tmp_path: Path) -> None:
+        import subprocess
+        bundle_dir = tmp_path / "bundle"
+        lake_bin = bundle_dir / "lean" / "bin"
+        non_json = "warning: something\n{not json at all}\n"
+        self._make_fake_lake(lake_bin, non_json)
+        install_lake_wrapper(bundle_dir, "linux-x64")
+
+        result = subprocess.run(
+            [str(lake_bin / "lake"), "setup-file", "Foo.lean"],
+            capture_output=True, timeout=5,
+        )
+        assert result.returncode == 0
+        assert result.stdout.decode() == non_json
+
+    def test_non_setup_file_passes_through(self, tmp_path: Path) -> None:
+        import subprocess
+        bundle_dir = tmp_path / "bundle"
+        lake_bin = bundle_dir / "lean" / "bin"
+        lake_bin.mkdir(parents=True)
+        (lake_bin / "lake").write_text("#!/bin/sh\necho real-lake-output")
+        (lake_bin / "lake").chmod(0o755)
+        install_lake_wrapper(bundle_dir, "linux-x64")
+
+        result = subprocess.run(
+            [str(lake_bin / "lake"), "build"],
+            capture_output=True, timeout=5,
+        )
+        assert result.returncode == 0
+        assert b"real-lake-output" in result.stdout
+
+
 def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
     vscodium_dir = tmp_path / "vscodium"
     vscodium_dir.mkdir()
