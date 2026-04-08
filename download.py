@@ -3,9 +3,11 @@
 Downloads the Lean toolchain, VSCodium portable, and lean4 VS Code extension.
 """
 
+import calendar
 import hashlib
 import io
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -117,6 +119,9 @@ def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, open(out_path, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+            # Restore the stored timestamp so olean freshness survives
+            mtime = calendar.timegm(info.date_time + (0, 0, -1))
+            os.utime(out_path, (mtime, mtime))
             # Restore Unix permissions if stored
             if unix_mode:
                 out_path.chmod(unix_mode & 0o777)
