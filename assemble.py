@@ -6,6 +6,7 @@ into the final bundle layout.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -136,6 +137,19 @@ _ALLOWLIST_FILES = {
 _ALLOWLIST_DIRS = {".vscode"}
 _SKIP_DIRS = {".lake", ".git", ".github", "lake-packages"}
 
+# Settings that MUST override any project workspace settings to ensure the
+# bundle works correctly offline.  Editor preferences (tabSize, encoding, …)
+# are intentionally omitted — projects are free to customise those.
+_BUNDLE_CRITICAL_SETTINGS: dict[str, object] = {
+    "lean4.automaticallyBuildDependencies": False,
+    "lean4.alwaysAskBeforeInstallingLeanVersions": True,
+    "lean4.showSetupWarnings": False,
+    "extensions.autoUpdate": False,
+    "update.mode": "none",
+    "extensions.autoCheckUpdates": False,
+    "telemetry.telemetryLevel": "off",
+}
+
 
 def copy_project_files(
     project_dir: Path,
@@ -180,6 +194,49 @@ def copy_project_files(
                         match, dst, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(*_SKIP_DIRS),
                     )
+
+
+def _parse_jsonc(text: str) -> object:
+    """Parse a JSONC (JSON with Comments) string.
+
+    VS Code settings files commonly use ``//`` line comments, ``/* */``
+    block comments, and trailing commas — all legal JSONC but rejected by
+    Python's strict :func:`json.loads`.  This helper strips those before
+    parsing.
+    """
+    # Remove block comments (/* ... */), then line comments (// ...)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"//[^\n]*", "", text)
+    # Remove trailing commas before } or ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return json.loads(text)
+
+
+def _patch_workspace_settings(
+    bundle_project: Path,
+    critical_settings: dict[str, object],
+) -> None:
+    """Ensure bundle-critical settings override project workspace settings.
+
+    VS Code workspace settings (``.vscode/settings.json``) take precedence
+    over user settings.  If the project ships its own workspace settings
+    (e.g. ``lean4.automaticallyBuildDependencies: true``), they will
+    override the bundle's user-level ``false``, re-enabling the exact
+    behaviour the bundle is designed to prevent.
+
+    This function merges *critical_settings* into the project's workspace
+    settings so that bundle-critical values always win.
+    """
+    vscode_dir = bundle_project / ".vscode"
+    vscode_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = vscode_dir / "settings.json"
+
+    settings: dict[str, object] = {}
+    if settings_path.is_file():
+        settings = _parse_jsonc(settings_path.read_text())
+
+    settings.update(critical_settings)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
 
 def prune_ir_from_bundle(bundle_project: Path) -> tuple[int, int]:
@@ -587,6 +644,9 @@ def assemble_bundle(
     print("Copying project files...")
     bundle_project = bundle_dir / "project"
     copy_project_files(project_dir, bundle_project, extra_include=extra_include)
+
+    print("Patching workspace settings with bundle-critical overrides...")
+    _patch_workspace_settings(bundle_project, _BUNDLE_CRITICAL_SETTINGS)
 
     print("Copying project oleans...")
     n_proj = copy_project_oleans(project_dir, bundle_project)
