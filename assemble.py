@@ -13,6 +13,101 @@ from pathlib import Path
 
 
 
+_BUILD_MARKERS = (
+    ("build", "lib", "lean"),
+    ("build", "ir"),
+)
+
+
+def _module_stem_from_build_path(rel_parts: tuple[str, ...]) -> str | None:
+    """Extract module stem from a ``.lake/``-relative path if it is a build artifact.
+
+    Returns the module stem (e.g. ``"Mathlib/Algebra/Group/Basic"``) for
+    files under ``build/lib/lean/`` or ``build/ir/`` directories, or
+    ``None`` if the path is not inside a recognised build artifact tree.
+    """
+    for marker in _BUILD_MARKERS:
+        mlen = len(marker)
+        for i in range(len(rel_parts) - mlen):
+            if rel_parts[i : i + mlen] == marker:
+                after = rel_parts[i + mlen :]
+                if not after:
+                    return None
+                # Strip *all* extensions from the filename to recover the
+                # module name component.  E.g. "Basic.olean.private" → "Basic".
+                filename = after[-1]
+                dot = filename.find(".")
+                base = filename[:dot] if dot > 0 else filename
+                if len(after) > 1:
+                    return str(Path(*after[:-1]) / base)
+                return base
+    return None
+
+
+def copy_lake_selective(
+    src_lake: Path,
+    dst_lake: Path,
+    needed_stems: set[str] | None,
+) -> tuple[int, int]:
+    """Copy ``.lake/`` directory, optionally pruning to the import closure.
+
+    When *needed_stems* is given, build artifacts under ``build/lib/lean/``
+    and ``build/ir/`` are copied only for modules whose stem is in the set.
+    All other files (config, lakefiles, sources, etc.) are always copied.
+
+    Returns ``(files_copied, files_skipped)``.
+    """
+    if needed_stems is None:
+        shutil.copytree(src_lake, dst_lake, symlinks=True, dirs_exist_ok=True)
+        n = sum(1 for p in dst_lake.rglob("*") if p.is_file() or p.is_symlink())
+        return n, 0
+
+    # Pre-compute the set of directory prefixes that contain at least one
+    # needed module so we can skip entire sub-trees early.
+    needed_prefixes: set[str] = set()
+    for s in needed_stems:
+        parts = s.split("/")
+        for i in range(1, len(parts) + 1):
+            needed_prefixes.add("/".join(parts[:i]))
+
+    skipped = [0]
+
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        ignored: set[str] = set()
+        dir_path = Path(directory)
+        try:
+            rel_dir = dir_path.relative_to(src_lake)
+        except ValueError:
+            return ignored
+        dir_parts = tuple(rel_dir.parts)
+
+        for name in contents:
+            full = dir_path / name
+            entry_parts = dir_parts + (name,)
+
+            if full.is_dir() and not full.is_symlink():
+                # For directories inside build artifact trees, skip the
+                # entire sub-tree when no needed stem has a matching prefix.
+                stem = _module_stem_from_build_path(entry_parts)
+                if stem is not None and stem not in needed_prefixes:
+                    ignored.add(name)
+                    skipped[0] += 1
+                continue
+
+            stem = _module_stem_from_build_path(entry_parts)
+            if stem is not None and stem not in needed_stems:
+                ignored.add(name)
+                skipped[0] += 1
+
+        return ignored
+
+    shutil.copytree(
+        src_lake, dst_lake, symlinks=True, dirs_exist_ok=True, ignore=_ignore,
+    )
+    n_copied = sum(1 for p in dst_lake.rglob("*") if p.is_file() or p.is_symlink())
+    return n_copied, skipped[0]
+
+
 def _copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
@@ -446,6 +541,7 @@ def assemble_bundle(
     bundle_dir: Path,
     platform: str,
     extra_include: list[str] | None = None,
+    needed_stems: set[str] | None = None,
 ) -> None:
     """Assemble the complete bundle directory.
 
@@ -459,6 +555,11 @@ def assemble_bundle(
         templates_dir: Directory containing launcher and settings templates.
         bundle_dir: Output bundle directory to create.
         platform: Target platform key.
+        extra_include: Additional file glob patterns to copy from the project.
+        needed_stems: Module stems from the import closure. When given,
+            only build artifacts for these modules are copied into the
+            bundle's ``.lake/`` tree. Pass ``None`` to copy everything
+            (fallback when the import closure cannot be computed).
     """
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
@@ -491,18 +592,18 @@ def assemble_bundle(
     n_proj = copy_project_oleans(project_dir, bundle_project)
     print(f"  {n_proj} project olean files copied")
 
-    # Copy the full .lake/ directory from the source project.
-    # Lake's trace validation depends on the complete build artifact tree —
-    # partial copies (even of build/lib/lean/ + build/ir/) cause hash
-    # mismatches that trigger full rebuilds (>600s). IR artifacts are
-    # removed below after the in-bundle rebuild has updated the traces.
+    # Copy the .lake/ directory, pruning build artifacts to only the
+    # modules in the transitive import closure when available.  This
+    # typically reduces a full-mathlib bundle from ~5000 modules to the
+    # ~50-100 actually imported by the project.
     print("Copying project .lake directory...")
     src_lake = project_dir / ".lake"
     dst_lake = bundle_project / ".lake"
     if src_lake.is_dir():
-        shutil.copytree(src_lake, dst_lake, symlinks=True, dirs_exist_ok=True)
-        n_files = sum(1 for _ in dst_lake.rglob("*") if _.is_file())
-        print(f"  {n_files} files copied")
+        n_copied, n_skipped = copy_lake_selective(
+            src_lake, dst_lake, needed_stems,
+        )
+        print(f"  {n_copied} files copied, {n_skipped} skipped (not in import closure)")
 
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)

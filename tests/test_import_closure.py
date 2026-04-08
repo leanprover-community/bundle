@@ -12,6 +12,7 @@ from import_closure import (
     compute_src_deps,
     find_module_build_artifacts,
     module_build_artifact_prefix,
+    src_paths_to_module_stems,
 )
 
 
@@ -59,6 +60,58 @@ class TestComputeSrcDeps:
         deps = compute_src_deps(project)
 
         assert deps == {dep_a.resolve(), dep_b.resolve()}
+
+
+class TestSrcPathsToModuleStems:
+    def test_includes_project_sources(self, tmp_path):
+        project = tmp_path / "project"
+        (project / "MyProject").mkdir(parents=True)
+        (project / "MyProject" / "Foo.lean").write_text("")
+        (project / "Main.lean").write_text("")
+
+        stems = src_paths_to_module_stems(set(), project)
+        assert "MyProject/Foo" in stems
+        assert "Main" in stems
+
+    def test_includes_dependency_sources(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "Main.lean").write_text("")
+
+        pkg = project / ".lake" / "packages" / "mathlib"
+        (pkg / "Mathlib" / "Algebra" / "Group").mkdir(parents=True)
+        (pkg / "Mathlib" / "Algebra" / "Group" / "Basic.lean").write_text("")
+
+        dep_path = (pkg / "Mathlib" / "Algebra" / "Group" / "Basic.lean").resolve()
+        stems = src_paths_to_module_stems({dep_path}, project)
+        assert "Mathlib/Algebra/Group/Basic" in stems
+        assert "Main" in stems  # project source also included
+
+    def test_ignores_toolchain_sources(self, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "Main.lean").write_text("")
+
+        toolchain_src = tmp_path / "toolchain" / "lib" / "Init" / "Prelude.lean"
+        toolchain_src.parent.mkdir(parents=True)
+        toolchain_src.write_text("")
+
+        stems = src_paths_to_module_stems({toolchain_src.resolve()}, project)
+        # Toolchain source is not under project or .lake/packages, so ignored
+        assert "Init/Prelude" not in stems
+        assert "Main" in stems
+
+    def test_skips_lake_dir_in_project_scan(self, tmp_path):
+        project = tmp_path / "project"
+        lake_build = project / ".lake" / "build" / "lib" / "lean"
+        lake_build.mkdir(parents=True)
+        (lake_build / "Stale.lean").write_text("")
+        (project / "Real.lean").write_text("")
+
+        stems = src_paths_to_module_stems(set(), project)
+        assert "Real" in stems
+        # Files inside .lake/ are NOT treated as project sources
+        assert "Stale" not in stems
 
 
 class TestModuleBuildArtifacts:

@@ -119,10 +119,10 @@ MDD154-bundle/
 ## How it works
 
 1. Clones the target project and builds it (fetching mathlib cache)
-2. Parses all `import` statements to compute the transitive closure of needed modules
-3. Copies only those modules' `.olean` and `.lean` files into the bundle
-4. Downloads VSCodium portable and the lean4 extension
-5. Trims the Lean toolchain (removes clang, LLVM, ~500MB saved)
+2. Downloads VSCodium portable and the lean4 extension
+3. Uses `lean --src-deps` to compute the transitive import closure
+4. Copies only the needed modules' build artifacts (`.olean`, `.ilean`, etc.) into the bundle, skipping the thousands of Mathlib modules that aren't transitively imported
+5. Trims the Lean toolchain (removes clang, LLVM, ~500 MB saved)
 6. Creates a launcher script that sets PATH, LEAN_PATH, ELAN_HOME
 7. Packages everything into a zip
 
