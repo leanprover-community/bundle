@@ -726,7 +726,7 @@ jobs:
           fail=0
           for f in "$root/lean/bin/lean" "$root/lean/bin/lake" \
                    "$root/vscodium/VSCodium.app/Contents/MacOS/VSCodium" \
-                   "$root/Start_Lean.sh"; do
+                   "$root/Start_Lean.command"; do
             if [ ! -x "$f" ]; then
               echo "::error::Not executable after unzip: $f"
               fail=1

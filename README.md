@@ -104,7 +104,7 @@ python bundle.py https://github.com/PatrickMassot/MDD154 \
 
 ```
 MDD154-bundle/
-  Start_Lean.cmd              # Double-click to launch (Windows)
+  Start_Lean.command/.cmd/.sh  # Double-click to launch (one per platform)
   lean/                       # Trimmed Lean toolchain
   vscodium/                   # Portable VSCodium + lean4 extension
   project/                    # Course project
