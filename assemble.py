@@ -121,13 +121,23 @@ def _touch_oleans(bundle_project: Path) -> None:
     out-of-date. After copying files into the bundle (and especially
     after zip/unzip), timestamps can become equal or inverted, causing
     ``lake build --no-build`` to report targets as out-of-date.
+
+    We set the olean mtime to ``max(.lean mtime) + 10``, not a small
+    offset from ``time.time()``.  The .lean files inside ``.lake/packages/``
+    retain their original mtime from the build host, which can be very
+    close to (or even after) the current time when assembly runs quickly.
+    A relative offset from the actual source timestamps is robust.
     """
     import os
-    # Set olean mtime to 1 second in the future to guarantee they're newer
-    future = time.time() + 1
+    # Find the newest .lean source file anywhere in the project tree
+    lean_max = 0.0
+    for f in bundle_project.rglob("*.lean"):
+        lean_max = max(lean_max, f.stat().st_mtime)
+    # Also ensure we're at least in the future relative to now
+    target = max(lean_max, time.time()) + 10
     for ext in ("*.olean", "*.ilean"):
         for p in bundle_project.rglob(ext):
-            os.utime(p, (future, future))
+            os.utime(p, (target, target))
 
 
 _ALLOWLIST_FILES = {
@@ -668,11 +678,6 @@ def assemble_bundle(
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
 
-    # Ensure oleans are strictly newer than sources so Lake's timestamp
-    # check doesn't consider them out-of-date after copy/zip/unzip.
-    print("Fixing olean timestamps...")
-    _touch_oleans(bundle_project)
-
     # Rebuild the project's own modules inside the assembled bundle.
     # This ensures the project's build traces are valid for the bundle's
     # workspace configuration. Only the project's own modules need
@@ -712,6 +717,11 @@ def assemble_bundle(
             print("  Warning: project rebuild timed out (600s), continuing without rebuild")
     else:
         print("  Skipped (cross-platform build, lake binary not runnable)")
+
+    # Touch oleans AFTER the rebuild so they're strictly newer than any
+    # source files or trace files the rebuild may have updated.
+    print("Fixing olean timestamps...")
+    _touch_oleans(bundle_project)
 
     # Strip Lean IR payloads from the .lake build tree. The LSP does not
     # need them, and we can safely drop them without breaking Lake's trace

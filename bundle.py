@@ -73,6 +73,23 @@ def build_project(project_dir: Path) -> None:
 
 def create_zip(bundle_dir: Path, output_path: Path) -> None:
     print(f"Creating {output_path}...")
+
+    # Compute the latest .lean source mtime so we can force all olean/ilean
+    # entries to be strictly newer in the zip.  DOS timestamps have 2-second
+    # granularity, so a small offset isn't reliable — we use 2 full minutes.
+    import datetime as _dt
+    lean_max_mtime = max(
+        (f.stat().st_mtime for f in bundle_dir.rglob("*.lean") if f.is_file()),
+        default=0,
+    )
+    # Convert to a datetime 2 minutes after the latest source, rounded up
+    # to the next even second (DOS granularity).
+    olean_ts = _dt.datetime.fromtimestamp(lean_max_mtime + 120)
+    olean_date_time = (
+        olean_ts.year, olean_ts.month, olean_ts.day,
+        olean_ts.hour, olean_ts.minute, olean_ts.second & ~1,  # even second
+    )
+
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(bundle_dir.rglob("*")):
             arcname = str(path.relative_to(bundle_dir.parent))
@@ -83,8 +100,16 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
                 info.compress_type = zipfile.ZIP_STORED
                 zf.writestr(info, str(os.readlink(path)))
             elif path.is_file():
-                # zf.write() streams the file and preserves Unix permissions
-                zf.write(path, arcname)
+                if path.suffix in (".olean", ".ilean"):
+                    # Force olean/ilean to a timestamp well after the latest
+                    # .lean source so they survive DOS timestamp rounding.
+                    info = zipfile.ZipInfo.from_file(path, arcname)
+                    info.date_time = olean_date_time
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    zf.writestr(info, path.read_bytes())
+                else:
+                    # zf.write() streams the file and preserves Unix permissions
+                    zf.write(path, arcname)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     with open(output_path, "rb") as f:

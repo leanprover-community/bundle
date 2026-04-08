@@ -91,20 +91,10 @@ export async function launchVSCodium(options?: {
         DONT_PROMPT_WSL_INSTALL: '1',
     };
 
-    // Patch settings.json to disable workspace trust and window restore.
-    // Save the original so we can restore it in closeVSCodium.
-    const settingsDir = path.join(userDataDir, 'User');
-    fs.mkdirSync(settingsDir, { recursive: true });
-    const settingsFile = path.join(settingsDir, 'settings.json');
-    const settingsBackup = settingsFile + '.tier6-backup';
-    let settings: Record<string, unknown> = {};
-    if (fs.existsSync(settingsFile)) {
-        fs.copyFileSync(settingsFile, settingsBackup);
-        try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')); } catch { /* */ }
-    }
-    settings['security.workspace.trust.enabled'] = false;
-    settings['window.restoreWindows'] = 'none';
-    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+    // The bundle's own settings.json already disables workspace trust and
+    // window restore (templates/settings.json + _patch_workspace_settings in
+    // assemble.py).  We deliberately do NOT patch them here so that Tier 6
+    // screenshots reflect the actual student experience.
 
     const cdpPort = randomPort();
 
@@ -222,11 +212,5 @@ export async function closeVSCodium(result: LaunchResult) {
     }
     for (const f of result.copiedFixtures) {
         try { fs.unlinkSync(f); } catch { /* ignore */ }
-    }
-    // Restore original settings.json
-    const settingsFile = path.join(result.userDataDir, 'User', 'settings.json');
-    const settingsBackup = settingsFile + '.tier6-backup';
-    if (fs.existsSync(settingsBackup)) {
-        try { fs.renameSync(settingsBackup, settingsFile); } catch { /* ignore */ }
     }
 }
