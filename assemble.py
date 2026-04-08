@@ -233,11 +233,16 @@ def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
     Lake validates that the lakefile and manifest agree on dependency
     source kinds. If the manifest says path but the lakefile says git,
     Lake considers targets out-of-date and ``--no-build`` fails.
+
+    Handles all dependency forms including ``scope``+``branch`` syntax
+    (no explicit ``git`` key) and arbitrary key ordering within
+    ``[[require]]`` blocks.
     """
     lakefile = bundle_project / "lakefile.toml"
     if not lakefile.is_file():
         return
 
+    import re
     import tomllib
     text = lakefile.read_text()
     try:
@@ -249,23 +254,66 @@ def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
     if not requires:
         return
 
-    # For each git require, replace the git line with a path line
+    # Identify deps that need rewriting: any with git or scope keys
+    # (scope implies a git dep resolved by Lake)
+    names_to_rewrite = set()
     for req in requires:
         name = req.get("name", "")
-        if "git" not in req:
-            continue
-        # Replace: git = "..." with path = ".lake/packages/<name>"
-        # Also remove rev = "..." if present
-        import re
-        # Match the [[require]] block for this name and replace git/rev lines
-        pattern = (
-            r'(\[\[require\]\]\s*\n'
-            r'name\s*=\s*"' + re.escape(name) + r'")\s*\n'
-            r'git\s*=\s*"[^"]*"'
-            r'(\s*\nrev\s*=\s*"[^"]*")?'
+        if name and ("git" in req or "scope" in req):
+            names_to_rewrite.add(name)
+
+    if not names_to_rewrite:
+        return
+
+    # Keys to remove from git/scope dep blocks
+    git_keys = {"git", "rev", "scope", "branch"}
+
+    # Find [[require]] block boundaries in the raw text.
+    # A block starts at [[require]] and ends at the next table header or EOF.
+    header_re = re.compile(r"^\s*\[\[?\w", re.MULTILINE)
+    require_re = re.compile(r"^\s*\[\[\s*require\s*\]\]", re.MULTILINE)
+
+    blocks = []
+    for m in require_re.finditer(text):
+        start = m.start()
+        # Find next header after this one
+        end_match = header_re.search(text, m.end())
+        end = end_match.start() if end_match else len(text)
+        blocks.append((start, end))
+
+    # Process blocks in reverse order to preserve character positions
+    for block_start, block_end in reversed(blocks):
+        block_text = text[block_start:block_end]
+
+        # Extract name from this block, skipping comment lines
+        name_match = re.search(
+            r'^(?!\s*#)\s*name\s*=\s*"([^"]*)"', block_text, re.MULTILINE
         )
-        replacement = r'\1\npath = ".lake/packages/' + name + r'"'
-        text = re.sub(pattern, replacement, text)
+        if not name_match or name_match.group(1) not in names_to_rewrite:
+            continue
+
+        name = name_match.group(1)
+
+        # Remove git-related key lines, insert path at the first removal
+        lines = block_text.split("\n")
+        new_lines = []
+        path_added = False
+        for line in lines:
+            stripped = line.strip()
+            is_git_key = any(
+                re.match(rf"{k}\s*=", stripped) for k in git_keys
+            )
+            if is_git_key:
+                if not path_added:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    new_lines.append(
+                        f'{indent}path = ".lake/packages/{name}"'
+                    )
+                    path_added = True
+            else:
+                new_lines.append(line)
+
+        text = text[:block_start] + "\n".join(new_lines) + text[block_end:]
 
     lakefile.write_text(text)
 
