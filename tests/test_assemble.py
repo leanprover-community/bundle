@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -7,6 +8,17 @@ import json
 import pytest
 
 from assemble import install_lake_wrapper, prune_ir_from_bundle, setup_vscodium_portable
+
+
+def test_no_zip_without_work_dir_is_rejected() -> None:
+    """--no-zip without --work-dir must be rejected before any work starts (#27)."""
+    result = subprocess.run(
+        [sys.executable, "bundle.py", "https://example.invalid/repo", "--no-zip"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "--no-zip requires --work-dir" in result.stderr
 
 
 def test_prune_ir_from_bundle_removes_lean_ir_payloads(tmp_path: Path) -> None:

@@ -154,6 +154,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    if args.no_zip and not args.work_dir:
+        parser.error("--no-zip requires --work-dir (otherwise the bundle is assembled in a temp dir that gets cleaned up)")
+
     if args.platform is None:
         import platform
         machine = platform.machine().lower()
@@ -240,7 +243,7 @@ def main() -> None:
             create_zip(bundle_dir, output)
 
     finally:
-        if temp_dir and not args.work_dir:
+        if temp_dir and not args.work_dir and not args.no_zip:
             print(f"Cleaning up {temp_dir}")
             shutil.rmtree(temp_dir, ignore_errors=True)
 
