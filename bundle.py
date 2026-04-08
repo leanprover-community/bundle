@@ -83,8 +83,21 @@ def create_zip(bundle_dir: Path, output_path: Path) -> None:
                 info.compress_type = zipfile.ZIP_STORED
                 zf.writestr(info, str(os.readlink(path)))
             elif path.is_file():
-                # zf.write() streams the file and preserves Unix permissions
-                zf.write(path, arcname)
+                if path.suffix in (".olean", ".ilean"):
+                    # Advance olean/ilean timestamps by 4 seconds so they
+                    # remain strictly newer than .lean sources after zip
+                    # round-trip.  Zip uses DOS timestamps with 2-second
+                    # granularity, so the 1-second offset from _touch_oleans
+                    # can round to equality.  4 seconds survives the rounding.
+                    info = zipfile.ZipInfo.from_file(path, arcname)
+                    dt = list(info.date_time)
+                    dt[5] = min(dt[5] + 4, 58)  # seconds field, cap at 58
+                    info.date_time = tuple(dt)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    zf.writestr(info, path.read_bytes())
+                else:
+                    # zf.write() streams the file and preserves Unix permissions
+                    zf.write(path, arcname)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     with open(output_path, "rb") as f:

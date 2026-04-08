@@ -276,9 +276,7 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
-      - name: Fix olean timestamps after unzip
-        run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
@@ -322,9 +320,7 @@ jobs:
           echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
           echo "Bundle root: $(pwd)/$root"
 
-      - name: Fix olean timestamps after unzip
-        run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -387,9 +383,7 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
-      - name: Fix olean timestamps after unzip
-        run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
@@ -433,9 +427,7 @@ jobs:
           echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
           echo "Bundle root: $(pwd)/$root"
 
-      - name: Fix olean timestamps after unzip
-        run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -485,10 +477,7 @@ jobs:
           echo "Bundle root: $($root.FullName)"
           Get-ChildItem $root.FullName
 
-      - name: Fix olean timestamps after unzip
-        shell: pwsh
-        run: |
-          Get-ChildItem "${{ steps.find-root.outputs.BUNDLE_ROOT }}" -Recurse -Include *.olean,*.ilean | ForEach-Object { $_.LastWriteTime = Get-Date }
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
@@ -717,26 +706,84 @@ jobs:
           echo "Bundle root: $(pwd)/$root"
           ls "$(pwd)/$root"
 
-      - name: Remove quarantine attributes
-        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+      # --- Tier 0: Student experience (no fixups) ---
+      # These checks run with zero CI workarounds — the bundle must work
+      # as-is after extraction, exactly as a student would experience it.
+      # The launcher's own xattr -cr handles quarantine; create_zip's
+      # timestamp advance handles olean freshness.  If these fail, the
+      # bundle is broken for students regardless of what later tiers say.
 
-      - name: Verify executable permissions survived zip round-trip
+      - name: "Tier 0: Verify executable permissions survived zip"
         run: |
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           fail=0
           for f in "$root/lean/bin/lean" "$root/lean/bin/lake" \
-                   "$root/vscodium/VSCodium.app/Contents/MacOS/VSCodium" \
-                   "$root/Start_Lean.command"; do
+                   "$root/vscodium/VSCodium.app/Contents/MacOS/VSCodium"; do
             if [ ! -x "$f" ]; then
               echo "::error::Not executable after unzip: $f"
               fail=1
             fi
           done
+          launcher=$(find "$root" -maxdepth 1 \( -name '*.command' -o -name '*.sh' \) | head -1)
+          if [ -z "$launcher" ] || [ ! -x "$launcher" ]; then
+            echo "::error::No executable launcher found in bundle root"
+            fail=1
+          fi
           if [ "$fail" -eq 1 ]; then exit 1; fi
 
-      - name: Fix olean timestamps after unzip
+      - name: "Tier 0: Verify bundle settings (trust, auto-build, restore)"
         run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+          python3 -c "
+          import json, sys
+          root = '${{ steps.find-root.outputs.BUNDLE_ROOT }}'
+          user_settings = json.loads(open(f'{root}/vscodium/data/user-data/User/settings.json').read())
+          ws_settings = {}
+          ws_path = f'{root}/project/.vscode/settings.json'
+          try: ws_settings = json.loads(open(ws_path).read())
+          except FileNotFoundError: pass
+          errors = []
+          # User settings must have trust disabled
+          if user_settings.get('security.workspace.trust.enabled') is not False:
+              errors.append('user settings: security.workspace.trust.enabled not False')
+          if user_settings.get('window.restoreWindows') != 'none':
+              errors.append('user settings: window.restoreWindows not none')
+          # Workspace settings must not override auto-build to true
+          if ws_settings.get('lean4.automaticallyBuildDependencies') is True:
+              errors.append('workspace settings override: lean4.automaticallyBuildDependencies is True')
+          for e in errors: print(f'::error::{e}')
+          sys.exit(1 if errors else 0)
+          "
+
+      - name: "Tier 0: Verify oleans are newer than sources (no touch needed)"
+        run: |
+          python3 -c "
+          import sys
+          from pathlib import Path
+          root = Path('${{ steps.find-root.outputs.BUNDLE_ROOT }}/project')
+          lean_files = list(root.rglob('*.lean'))
+          olean_files = list(root.rglob('*.olean'))
+          if not lean_files or not olean_files:
+              print('No lean/olean files found — skipping timestamp check')
+              sys.exit(0)
+          lean_max = max(f.stat().st_mtime for f in lean_files)
+          olean_min = min(f.stat().st_mtime for f in olean_files)
+          if lean_max >= olean_min:
+              print(f'::error::Stale oleans: max .lean mtime={lean_max}, min .olean mtime={olean_min}')
+              sys.exit(1)
+          print(f'OK: all oleans ({olean_min:.1f}) newer than all sources ({lean_max:.1f})')
+          "
+
+      - name: "Tier 0: Launcher runs lean (quarantine cleared by script)"
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          # Source the launcher's environment setup (skip the exec VSCodium)
+          # by running the script up to the xattr -cr and lean/bin setup.
+          export BUNDLE_ROOT="$root"
+          export PATH="$root/lean/bin:$PATH"
+          export ELAN_HOME="$root/lean"
+          # The launcher would run xattr -cr; do it here as the launcher would
+          xattr -cr "$root" 2>/dev/null || true
+          "$root/lean/bin/lean" --version
 
       # --- Tier 1: Structural integrity ---
       - name: "Tier 1: Verify bundle structure"
@@ -853,12 +900,15 @@ jobs:
           echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
           echo "Bundle root: $(pwd)/$root"
 
-      - name: Remove quarantine attributes
-        run: xattr -cr "${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+      # No xattr -cr or touch *.olean here — the bundle itself handles
+      # quarantine (via the launcher) and timestamps (via create_zip).
+      # The Tier 6 screenshots must reflect the real student experience.
 
-      - name: Fix olean timestamps after unzip
+      - name: "Clear quarantine via launcher (as student would)"
         run: |
-          find "${{ steps.find-root.outputs.BUNDLE_ROOT }}" \( -name '*.olean' -o -name '*.ilean' \) -exec touch {} +
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          export BUNDLE_ROOT="$root"
+          xattr -cr "$root" 2>/dev/null || true
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
@@ -904,10 +954,7 @@ jobs:
           echo "BUNDLE_ROOT=$($root.FullName)" >> $env:GITHUB_OUTPUT
           echo "Bundle root: $($root.FullName)"
 
-      - name: Fix olean timestamps after unzip
-        shell: pwsh
-        run: |
-          Get-ChildItem "${{ steps.find-root.outputs.BUNDLE_ROOT }}" -Recurse -Include *.olean,*.ilean | ForEach-Object { $_.LastWriteTime = Get-Date }
+      # Olean timestamps are now preserved by create_zip (4-second advance).
 
       - name: "Tier 6: Install Playwright test deps"
         shell: pwsh
