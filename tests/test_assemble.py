@@ -8,7 +8,10 @@ import json
 import pytest
 
 from assemble import (
+    _BUNDLE_CRITICAL_SETTINGS,
     _module_stem_from_build_path,
+    _parse_jsonc,
+    _patch_workspace_settings,
     _rewrite_lakefile_lean_deps,
     _rewrite_lakefile_toml_deps,
     copy_lake_selective,
@@ -273,6 +276,109 @@ def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
     ext_dest = vscodium_dir / "data" / "extensions" / extension_dir.name
     assert (ext_dest / "package.json").is_file()
     assert not (ext_dest / "extension" / "package.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Workspace settings patching (issue #35)
+# ---------------------------------------------------------------------------
+
+class TestPatchWorkspaceSettings:
+    """Test _patch_workspace_settings overrides bundle-critical settings."""
+
+    def test_overrides_existing_settings(self, tmp_path: Path) -> None:
+        """Project settings that conflict with bundle-critical values are overridden."""
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        (vscode_dir / "settings.json").write_text(json.dumps({
+            "lean4.automaticallyBuildDependencies": True,
+            "editor.fontSize": 14,
+        }))
+
+        _patch_workspace_settings(tmp_path, _BUNDLE_CRITICAL_SETTINGS)
+
+        result = json.loads((vscode_dir / "settings.json").read_text())
+        assert result["lean4.automaticallyBuildDependencies"] is False
+        # Non-critical project settings are preserved
+        assert result["editor.fontSize"] == 14
+
+    def test_creates_settings_when_missing(self, tmp_path: Path) -> None:
+        """settings.json is created if neither .vscode/ nor the file exist."""
+        _patch_workspace_settings(tmp_path, _BUNDLE_CRITICAL_SETTINGS)
+
+        settings_path = tmp_path / ".vscode" / "settings.json"
+        assert settings_path.is_file()
+        result = json.loads(settings_path.read_text())
+        assert result["lean4.automaticallyBuildDependencies"] is False
+        assert result["lean4.showSetupWarnings"] is False
+
+    def test_preserves_all_project_settings(self, tmp_path: Path) -> None:
+        """All non-conflicting project settings survive the patch."""
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        project_settings = {
+            "editor.tabSize": 4,
+            "editor.rulers": [80, 100],
+            "lean4.input.leader": "\\",
+        }
+        (vscode_dir / "settings.json").write_text(json.dumps(project_settings))
+
+        _patch_workspace_settings(tmp_path, {"lean4.automaticallyBuildDependencies": False})
+
+        result = json.loads((vscode_dir / "settings.json").read_text())
+        assert result["editor.tabSize"] == 4
+        assert result["editor.rulers"] == [80, 100]
+        assert result["lean4.input.leader"] == "\\"
+        assert result["lean4.automaticallyBuildDependencies"] is False
+
+    def test_creates_vscode_dir_when_missing(self, tmp_path: Path) -> None:
+        """.vscode/ directory is created if it doesn't exist."""
+        assert not (tmp_path / ".vscode").exists()
+        _patch_workspace_settings(tmp_path, {"update.mode": "none"})
+        assert (tmp_path / ".vscode").is_dir()
+
+    def test_handles_jsonc_with_comments(self, tmp_path: Path) -> None:
+        """Project settings.json with JSONC comments and trailing commas."""
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        (vscode_dir / "settings.json").write_text(
+            '{\n'
+            '  // project preference\n'
+            '  "lean4.automaticallyBuildDependencies": true,\n'
+            '  /* block comment */\n'
+            '  "editor.fontSize": 14,\n'  # trailing comma
+            '}\n'
+        )
+
+        _patch_workspace_settings(tmp_path, _BUNDLE_CRITICAL_SETTINGS)
+
+        result = json.loads((vscode_dir / "settings.json").read_text())
+        assert result["lean4.automaticallyBuildDependencies"] is False
+        assert result["editor.fontSize"] == 14
+
+    def test_all_critical_settings_present(self) -> None:
+        """Smoke test: the constant has the expected keys."""
+        assert "lean4.automaticallyBuildDependencies" in _BUNDLE_CRITICAL_SETTINGS
+        assert "lean4.alwaysAskBeforeInstallingLeanVersions" in _BUNDLE_CRITICAL_SETTINGS
+        assert "lean4.showSetupWarnings" in _BUNDLE_CRITICAL_SETTINGS
+
+
+class TestParseJsonc:
+    """Test _parse_jsonc handles VS Code-style JSONC."""
+
+    def test_line_comments(self) -> None:
+        assert _parse_jsonc('{\n// comment\n"a": 1\n}') == {"a": 1}
+
+    def test_block_comments(self) -> None:
+        assert _parse_jsonc('{"a": /* inline */ 1}') == {"a": 1}
+
+    def test_trailing_comma_object(self) -> None:
+        assert _parse_jsonc('{"a": 1, "b": 2,}') == {"a": 1, "b": 2}
+
+    def test_trailing_comma_array(self) -> None:
+        assert _parse_jsonc('{"a": [1, 2,]}') == {"a": [1, 2]}
+
+    def test_strict_json_passthrough(self) -> None:
+        assert _parse_jsonc('{"a": 1}') == {"a": 1}
 
 
 # ---------------------------------------------------------------------------
