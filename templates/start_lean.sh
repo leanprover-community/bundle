@@ -3,11 +3,6 @@
 
 BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# Strip macOS quarantine attribute from all bundle files.
-# Without this, Gatekeeper may block lean/lake binaries extracted
-# from a downloaded zip, causing silent LSP startup failure.
-xattr -dr com.apple.quarantine "$BUNDLE_ROOT" 2>/dev/null || true
-
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 
@@ -25,7 +20,12 @@ export LEAN_PATH
 
 # Launch VSCodium
 if [ -d "$BUNDLE_ROOT/vscodium/VSCodium.app" ]; then
-    # macOS — invoke the binary directly so it inherits our environment.
+    # macOS — strip quarantine attributes that block execution of binaries
+    # extracted from a downloaded zip. Without this, Gatekeeper may silently
+    # prevent lean/lake from running, causing the language server to fail.
+    xattr -dr com.apple.quarantine "$BUNDLE_ROOT" 2>/dev/null || true
+
+    # Invoke the binary directly so it inherits our environment.
     # `open` launches via Launch Services which drops env vars.
     exec "$BUNDLE_ROOT/vscodium/VSCodium.app/Contents/MacOS/VSCodium" "$BUNDLE_ROOT/project" "$@"
 else
