@@ -360,6 +360,7 @@ class TestPatchWorkspaceSettings:
         assert "lean4.automaticallyBuildDependencies" in _BUNDLE_CRITICAL_SETTINGS
         assert "lean4.alwaysAskBeforeInstallingLeanVersions" in _BUNDLE_CRITICAL_SETTINGS
         assert "lean4.showSetupWarnings" in _BUNDLE_CRITICAL_SETTINGS
+        assert "security.workspace.trust.enabled" in _BUNDLE_CRITICAL_SETTINGS
 
 
 class TestParseJsonc:

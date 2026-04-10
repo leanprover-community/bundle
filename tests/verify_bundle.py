@@ -78,6 +78,7 @@ def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
                 "extensions.autoUpdate": False,
                 "telemetry.telemetryLevel": "off",
                 "lean4.automaticallyBuildDependencies": False,
+                "security.workspace.trust.enabled": False,
             }
             for key, expected in expected_keys.items():
                 actual = settings.get(key)
@@ -87,6 +88,28 @@ def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
             errors.append(f"settings.json: invalid JSON: {e}")
     else:
         errors.append("Missing: vscodium/data/user-data/User/settings.json")
+
+    # Workspace settings (project/.vscode/settings.json) — bundle-critical
+    # values must also be present here because workspace settings override
+    # user settings in VS Code.
+    ws_settings_path = bundle_root / "project" / ".vscode" / "settings.json"
+    if ws_settings_path.is_file():
+        try:
+            ws_settings = json.loads(ws_settings_path.read_text())
+            ws_expected = {
+                "security.workspace.trust.enabled": False,
+                "lean4.automaticallyBuildDependencies": False,
+            }
+            for key, expected in ws_expected.items():
+                actual = ws_settings.get(key)
+                if actual != expected:
+                    errors.append(
+                        f"workspace settings.json: {key} = {actual!r}, expected {expected!r}"
+                    )
+        except json.JSONDecodeError as e:
+            errors.append(f"workspace settings.json: invalid JSON: {e}")
+    else:
+        errors.append("Missing: project/.vscode/settings.json")
 
     # --- Platform-specific shared libraries ---
     if is_windows:
