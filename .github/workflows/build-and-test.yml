@@ -709,7 +709,7 @@ jobs:
       # --- Tier 0: Student experience (no fixups) ---
       # These checks run with zero CI workarounds — the bundle must work
       # as-is after extraction, exactly as a student would experience it.
-      # The launcher's own xattr -cr handles quarantine; create_zip's
+      # The launcher's own xattr -dr handles quarantine; create_zip's
       # timestamp advance handles olean freshness.  If these fail, the
       # bundle is broken for students regardless of what later tiers say.
 
@@ -776,13 +776,12 @@ jobs:
       - name: "Tier 0: Launcher runs lean (quarantine cleared by script)"
         run: |
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          # Source the launcher's environment setup (skip the exec VSCodium)
-          # by running the script up to the xattr -cr and lean/bin setup.
+          # Replicate the launcher's environment setup (skip the exec VSCodium).
+          # The launcher runs xattr -dr first, then sets PATH/ELAN_HOME.
           export BUNDLE_ROOT="$root"
+          xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
           export PATH="$root/lean/bin:$PATH"
           export ELAN_HOME="$root/lean"
-          # The launcher would run xattr -cr; do it here as the launcher would
-          xattr -cr "$root" 2>/dev/null || true
           "$root/lean/bin/lean" --version
 
       # --- Tier 1: Structural integrity ---
@@ -900,7 +899,7 @@ jobs:
           echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
           echo "Bundle root: $(pwd)/$root"
 
-      # No xattr -cr or touch *.olean here — the bundle itself handles
+      # No xattr -dr or touch *.olean here — the bundle itself handles
       # quarantine (via the launcher) and timestamps (via create_zip).
       # The Tier 6 screenshots must reflect the real student experience.
 
@@ -908,7 +907,7 @@ jobs:
         run: |
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           export BUNDLE_ROOT="$root"
-          xattr -cr "$root" 2>/dev/null || true
+          xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
 
       - name: "Tier 6: Install Playwright test deps"
         run: |

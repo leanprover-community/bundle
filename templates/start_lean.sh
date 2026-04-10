@@ -3,6 +3,11 @@
 
 BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Strip macOS quarantine attribute from all bundle files.
+# Without this, Gatekeeper may block lean/lake binaries extracted
+# from a downloaded zip, causing silent LSP startup failure.
+xattr -dr com.apple.quarantine "$BUNDLE_ROOT" 2>/dev/null || true
+
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 
