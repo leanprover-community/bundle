@@ -158,6 +158,7 @@ _BUNDLE_CRITICAL_SETTINGS: dict[str, object] = {
     "update.mode": "none",
     "extensions.autoCheckUpdates": False,
     "telemetry.telemetryLevel": "off",
+    "security.workspace.trust.enabled": False,
 }
 
 
