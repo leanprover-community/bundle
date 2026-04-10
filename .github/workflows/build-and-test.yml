@@ -976,3 +976,26 @@ jobs:
           name: tier6-screenshots-windows
           path: tests/gui-playwright/test-results/
           retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Gate job — require this in branch protection so all CI must pass to merge.
+  # ---------------------------------------------------------------------------
+  ci:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - unit-tests
+      - test-linux-offline
+      - test-linux-gui
+      - test-linux-arm64-offline
+      - test-linux-arm64-gui
+      - test-windows
+      - test-macos
+      - test-macos-gui
+      - test-windows-gui
+    steps:
+      - name: Check all jobs passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::Some required jobs did not succeed: ${{ join(needs.*.result, ', ') }}"
+          exit 1
