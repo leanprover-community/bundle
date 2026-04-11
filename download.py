@@ -242,14 +242,15 @@ def _find_git_shim_compiler() -> tuple[str, tuple[str, ...]]:
     raise RuntimeError(
         "No C compiler found for building the Windows git shim.\n"
         "\n"
-        "On macOS:\n"
-        "  brew install mingw-w64    # or: brew install zig\n"
+        "Install zig (easiest cross-platform option):\n"
+        "  macOS:   brew install zig\n"
+        "  Linux:   apt-get install zig\n"
+        "  Windows: winget install zig.zig\n"
         "\n"
-        "On Linux:\n"
-        "  apt-get install gcc-mingw-w64-x86-64    # or: apt-get install zig\n"
-        "\n"
-        "On Windows:\n"
-        "  winget install zig.zig    # or install gcc via https://www.msys2.org/"
+        "Or install mingw-w64:\n"
+        "  macOS:   brew install mingw-w64\n"
+        "  Linux:   apt-get install gcc-mingw-w64-x86-64\n"
+        "  Windows: https://www.msys2.org/"
     )
 
 
