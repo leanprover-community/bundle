@@ -709,7 +709,7 @@ jobs:
       # --- Tier 0: Student experience (no fixups) ---
       # These checks run with zero CI workarounds — the bundle must work
       # as-is after extraction, exactly as a student would experience it.
-      # The launcher's own xattr -dr handles quarantine; create_zip's
+      # The launcher strips quarantine on macOS; create_zip's
       # timestamp advance handles olean freshness.  If these fail, the
       # bundle is broken for students regardless of what later tiers say.
 
@@ -734,12 +734,17 @@ jobs:
       - name: "Tier 0: Verify bundle settings (trust, auto-build, restore)"
         run: |
           python3 -c "
-          import json, sys
+          import json, re, sys
+          def parse_jsonc(text):
+              text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+              text = re.sub(r'//[^\n]*', '', text)
+              text = re.sub(r',\s*([}\]])', r'\1', text)
+              return json.loads(text)
           root = '${{ steps.find-root.outputs.BUNDLE_ROOT }}'
-          user_settings = json.loads(open(f'{root}/vscodium/data/user-data/User/settings.json').read())
+          user_settings = parse_jsonc(open(f'{root}/vscodium/data/user-data/User/settings.json').read())
           ws_settings = {}
           ws_path = f'{root}/project/.vscode/settings.json'
-          try: ws_settings = json.loads(open(ws_path).read())
+          try: ws_settings = parse_jsonc(open(ws_path).read())
           except FileNotFoundError: pass
           errors = []
           # User settings must have trust disabled
@@ -773,11 +778,15 @@ jobs:
           print(f'OK: all oleans ({olean_min:.1f}) newer than all sources ({lean_max:.1f})')
           "
 
-      - name: "Tier 0: Launcher runs lean (quarantine cleared by script)"
+      - name: "Tier 0: Launcher strips quarantine"
         run: |
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          # Replicate the launcher's environment setup (skip the exec VSCodium).
-          # The launcher runs xattr -dr first, then sets PATH/ELAN_HOME.
+          launcher=$(find "$root" -maxdepth 1 \( -name '*.command' -o -name '*.sh' \) | head -1)
+          if ! grep -q 'xattr -dr com.apple.quarantine' "$launcher"; then
+            echo "::error::Launcher does not contain 'xattr -dr com.apple.quarantine'"
+            exit 1
+          fi
+          # Run quarantine clearing as the launcher would, then verify lean works
           export BUNDLE_ROOT="$root"
           xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
           export PATH="$root/lean/bin:$PATH"
@@ -899,15 +908,13 @@ jobs:
           echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
           echo "Bundle root: $(pwd)/$root"
 
-      # No xattr -dr or touch *.olean here — the bundle itself handles
-      # quarantine (via the launcher) and timestamps (via create_zip).
-      # The Tier 6 screenshots must reflect the real student experience.
-
-      - name: "Clear quarantine via launcher (as student would)"
+      # The launcher strips quarantine; replicate here since GUI tests
+      # launch VSCodium directly without running the launcher script.
+      - name: "Clear quarantine (as launcher would)"
         run: |
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
-          export BUNDLE_ROOT="$root"
           xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
+
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
