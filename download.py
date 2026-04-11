@@ -249,7 +249,7 @@ def _find_git_shim_compiler() -> tuple[str, tuple[str, ...]]:
         "  apt-get install gcc-mingw-w64-x86-64    # or: apt-get install zig\n"
         "\n"
         "On Windows:\n"
-        "  Use the system gcc or clang"
+        "  winget install zig.zig    # or install gcc via https://www.msys2.org/"
     )
 
 
