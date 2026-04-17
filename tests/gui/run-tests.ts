@@ -66,6 +66,11 @@ async function main() {
     process.env.ELAN_HOME = path.join(bundleRoot, 'lean');
     process.env.LEAN_PATH = buildLeanPath(bundleRoot);
     process.env.BUNDLE_ROOT = bundleRoot;
+    // Force portable mode — the Tier 5 runner bypasses the launcher script
+    // and calls VSCodium directly via @vscode/test-electron, so we have to
+    // set VSCODE_PORTABLE ourselves.  Without this, macOS looks for
+    // "codium-portable-data" and never finds data/.
+    process.env.VSCODE_PORTABLE = path.join(bundleRoot, 'vscodium', 'data');
 
     console.log('=== Tier 5: VSCodium integration smoke test ===');
     console.log(`  VSCodium: ${vscodiumExe}`);
