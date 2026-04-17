@@ -19,9 +19,20 @@ for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
     )
 )
 
-:: Launch VSCodium with the project folder
+:: Determine which file to open (set during bundle assembly).
+set OPEN_FILE=@@OPEN_FILE@@
+
+:: Launch VSCodium with the project folder (and optional file).
 :: Use `start` so the Command Prompt window closes immediately instead of
 :: staying open for the entire VSCodium session. The empty "" is required
 :: as the window-title argument (otherwise `start` treats the quoted path
 :: as the title). Environment variables set above are inherited by `start`.
-start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
+if defined OPEN_FILE (
+    if exist "%BUNDLE_ROOT%\project\!OPEN_FILE!" (
+        start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" "%BUNDLE_ROOT%\project\!OPEN_FILE!" %*
+    ) else (
+        start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
+    )
+) else (
+    start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
+)

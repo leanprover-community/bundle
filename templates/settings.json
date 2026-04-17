@@ -8,6 +8,8 @@
   "telemetry.telemetryLevel": "off",
   "security.workspace.trust.enabled": false,
   "window.restoreWindows": "none",
+  "workbench.startupEditor": "none",
+  "git.openRepositoryInParentFolders": "never",
   "editor.tabSize": 2,
   "editor.insertSpaces": true,
   "files.encoding": "utf8",

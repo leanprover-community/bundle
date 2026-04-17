@@ -18,6 +18,15 @@ for pkg_dir in "$BUNDLE_ROOT"/project/.lake/packages/*/; do
 done
 export LEAN_PATH
 
+# Determine which file to open (set during bundle assembly).
+OPEN_FILE="@@OPEN_FILE@@"
+
+# Build the argument list: workspace folder, then optional file.
+ARGS=("$BUNDLE_ROOT/project")
+if [ -n "$OPEN_FILE" ] && [ -f "$BUNDLE_ROOT/project/$OPEN_FILE" ]; then
+    ARGS+=("$BUNDLE_ROOT/project/$OPEN_FILE")
+fi
+
 # Launch VSCodium
 if [ -d "$BUNDLE_ROOT/vscodium/VSCodium.app" ]; then
     # macOS — strip quarantine attributes that block execution of binaries
@@ -25,10 +34,19 @@ if [ -d "$BUNDLE_ROOT/vscodium/VSCodium.app" ]; then
     # prevent lean/lake from running, causing the language server to fail.
     xattr -dr com.apple.quarantine "$BUNDLE_ROOT" 2>/dev/null || true
 
-    # Invoke the binary directly so it inherits our environment.
-    # `open` launches via Launch Services which drops env vars.
-    exec "$BUNDLE_ROOT/vscodium/VSCodium.app/Contents/MacOS/VSCodium" "$BUNDLE_ROOT/project" "$@"
+    echo "=========================================="
+    echo "  Launching Lean 4 editor..."
+    echo "  You can close this terminal window."
+    echo "=========================================="
+
+    # Launch VSCodium in the background and detach it from this terminal
+    # so that closing the terminal window won't kill the editor.
+    # We invoke the binary directly (not `open`) so it inherits our
+    # environment — `open` launches via Launch Services which drops env vars.
+    "$BUNDLE_ROOT/vscodium/VSCodium.app/Contents/MacOS/VSCodium" "${ARGS[@]}" "$@" &
+    disown
+    exit 0
 else
-    # Linux
-    exec "$BUNDLE_ROOT/vscodium/bin/codium" "$BUNDLE_ROOT/project" "$@"
+    # Linux — no terminal window issue, so exec is fine.
+    exec "$BUNDLE_ROOT/vscodium/bin/codium" "${ARGS[@]}" "$@"
 fi

@@ -113,7 +113,9 @@ export async function launchVSCodium(options?: {
         '--disable-gpu',
         '--no-sandbox',
         '--disable-gpu-sandbox',
-        '--skip-welcome',
+        // --skip-welcome deliberately omitted: the bundle's own
+        // settings.json sets workbench.startupEditor=none, and we want
+        // Tier 6 to verify the real student experience.
         '--disable-updates',
         '--new-window',
     ];

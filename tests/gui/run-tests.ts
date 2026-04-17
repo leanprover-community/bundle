@@ -85,7 +85,6 @@ async function main() {
                 '--disable-gpu',
                 '--no-sandbox',
                 '--disable-gpu-sandbox',
-                '--skip-welcome',
                 '--disable-updates',
                 '--new-window',
             ],

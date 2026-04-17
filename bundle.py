@@ -172,6 +172,13 @@ def main() -> None:
         help="Additional file patterns to include from project (e.g. '*.json' 'data/')",
     )
     parser.add_argument(
+        "--open-file",
+        default=None,
+        help="Lean file to open on launch (e.g. 'LibDM3.lean'). "
+             "If not specified, the first .lean file (alphabetically, "
+             "excluding lakefile.lean) in the project root is used.",
+    )
+    parser.add_argument(
         "--no-zip",
         action="store_true",
         help="Skip zip creation, just assemble the bundle directory",
@@ -276,6 +283,7 @@ def main() -> None:
             platform=args.platform,
             extra_include=args.include,
             needed_stems=needed_stems,
+            open_file=args.open_file,
         )
 
         # Write bundle manifest for reproducibility

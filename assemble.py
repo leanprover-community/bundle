@@ -159,6 +159,8 @@ _BUNDLE_CRITICAL_SETTINGS: dict[str, object] = {
     "extensions.autoCheckUpdates": False,
     "telemetry.telemetryLevel": "off",
     "security.workspace.trust.enabled": False,
+    "workbench.startupEditor": "none",
+    "git.openRepositoryInParentFolders": "never",
 }
 
 
@@ -599,6 +601,20 @@ def setup_vscodium_portable(
     shutil.copy2(settings_template, user_dir / "settings.json")
 
 
+def _detect_open_file(project_dir: Path) -> str | None:
+    """Find the first ``.lean`` file in *project_dir* to open on launch.
+
+    Returns a filename (not a full path) relative to *project_dir*, or
+    ``None`` if no suitable file is found.  ``lakefile.lean`` is excluded
+    since it's infrastructure, not student content.
+    """
+    candidates = sorted(
+        f.name for f in project_dir.iterdir()
+        if f.is_file() and f.suffix == ".lean" and f.name != "lakefile.lean"
+    )
+    return candidates[0] if candidates else None
+
+
 def assemble_bundle(
     project_dir: Path,
     lean_dir: Path,
@@ -610,6 +626,7 @@ def assemble_bundle(
     platform: str,
     extra_include: list[str] | None = None,
     needed_stems: set[str] | None = None,
+    open_file: str | None = None,
 ) -> None:
     """Assemble the complete bundle directory.
 
@@ -628,6 +645,8 @@ def assemble_bundle(
             only build artifacts for these modules are copied into the
             bundle's ``.lake/`` tree. Pass ``None`` to copy everything
             (fallback when the import closure cannot be computed).
+        open_file: Lean file to open on launch (relative to project dir).
+            If ``None``, auto-detected from the project root.
     """
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
@@ -741,6 +760,14 @@ def assemble_bundle(
     else:
         print("Skipping IR pruning on Windows (lake wrapper not supported)")
 
+    # Determine which file to open on launch.
+    if open_file is None:
+        open_file = _detect_open_file(bundle_project)
+    if open_file:
+        print(f"  File to open on launch: {open_file}")
+    else:
+        print("  No .lean file found to open on launch")
+
     print("Installing launcher...")
     if platform.startswith("windows"):
         launcher_src = templates_dir / "start_lean.cmd"
@@ -752,7 +779,12 @@ def assemble_bundle(
         launcher_src = templates_dir / "start_lean.sh"
         launcher_dst = bundle_dir / "Start_Lean.sh"
 
-    shutil.copy2(launcher_src, launcher_dst)
+    # Substitute @@OPEN_FILE@@ placeholder with the selected file (or
+    # empty string if none).  This happens at assembly time so the
+    # launcher doesn't need to scan for files at runtime.
+    launcher_text = launcher_src.read_text()
+    launcher_text = launcher_text.replace("@@OPEN_FILE@@", open_file or "")
+    launcher_dst.write_text(launcher_text)
     if not platform.startswith("windows"):
         launcher_dst.chmod(0o755)
 
