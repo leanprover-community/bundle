@@ -3,6 +3,13 @@
 
 BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Force VSCodium portable mode.  Without this, macOS looks for
+# "codium-portable-data" next to VSCodium.app (the default name on macOS)
+# and never finds our data/ folder, so extensions and settings silently
+# don't load.  Setting VSCODE_PORTABLE short-circuits the platform-specific
+# path logic and works uniformly on Linux, macOS, and Windows.
+export VSCODE_PORTABLE="$BUNDLE_ROOT/vscodium/data"
+
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 

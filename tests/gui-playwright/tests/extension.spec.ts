@@ -51,10 +51,15 @@ test('lean file is recognized as lean4 language', async () => {
     const page = result.page;
     await page.waitForSelector('.monaco-workbench', { timeout: 30_000 });
 
-    // Open fixture_goals.lean from the explorer.
-    const fileItem = page.getByRole('treeitem', { name: 'fixture_goals.lean' });
-    await fileItem.waitFor({ timeout: 10_000 });
-    await fileItem.dblclick();
+    // Open fixture_goals.lean via Quick Open (Ctrl/Cmd+P).  The file
+    // explorer sidebar may be collapsed — especially on Windows where
+    // an auto-opened file steals focus — so don't rely on treeitems.
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.keyboard.press(`${mod}+KeyP`);
+    await page.waitForSelector('.quick-input-widget', { timeout: 10_000 });
+    await page.keyboard.type('fixture_goals', { delay: 30 });
+    await page.waitForTimeout(1500);
+    await page.keyboard.press('Enter');
 
     await page.waitForSelector('.monaco-editor .view-lines', { timeout: 15_000 });
 

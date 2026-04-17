@@ -5,6 +5,10 @@ setlocal EnableDelayedExpansion
 set BUNDLE_ROOT=%~dp0
 set BUNDLE_ROOT=%BUNDLE_ROOT:~0,-1%
 
+:: Force VSCodium portable mode.  Short-circuits platform-specific path
+:: detection so extensions and settings load consistently across OSes.
+set VSCODE_PORTABLE=%BUNDLE_ROOT%\vscodium\data
+
 :: Add lean and git to PATH
 set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%PATH%
 
