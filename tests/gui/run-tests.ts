@@ -85,8 +85,13 @@ async function main() {
             extensionTestsPath: path.resolve(__dirname, 'suite', 'index'),
             launchArgs: [
                 projectPath,
-                // Do NOT pass --extensions-dir: portable mode must auto-discover
-                // data/extensions/ without help, matching the real student launcher.
+                // Tier 5 runs through @vscode/test-electron, which uses its own
+                // isolated ".vscode-test/extensions" folder and does NOT honor
+                // portable mode.  Point it at the bundle's extensions so the
+                // tests can assert on lean4 extension activation.  (Tier 6
+                // Playwright tests the real student experience via portable
+                // mode — don't copy this flag there.)
+                `--extensions-dir=${path.join(bundleRoot, 'vscodium', 'data', 'extensions')}`,
                 `--user-data-dir=${path.join(bundleRoot, 'vscodium', 'data', 'user-data')}`,
                 '--disable-gpu',
                 '--no-sandbox',
