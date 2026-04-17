@@ -81,7 +81,9 @@ export async function launchVSCodium(options?: {
     const userStateDir = path.join(bundleRoot, 'vscodium', 'data', 'user-state');
     try { fs.rmSync(userStateDir, { recursive: true, force: true }); } catch { /* ignore */ }
 
-    const extensionsDir = path.join(bundleRoot, 'vscodium', 'data', 'extensions');
+    // Do NOT pass --extensions-dir: portable mode must auto-discover
+    // data/extensions/ without help, just like the real student launcher.
+    // Passing it explicitly would mask portable-mode detection bugs.
 
     // Only set test-infrastructure env vars. The launcher script owns
     // PATH, ELAN_HOME, and LEAN_PATH — that's what we're testing.
@@ -108,7 +110,6 @@ export async function launchVSCodium(options?: {
     // launcher forwards via "$@" (Unix) or %* (Windows).
     const extraArgs = [
         `--user-data-dir=${userDataDir}`,
-        `--extensions-dir=${extensionsDir}`,
         `--remote-debugging-port=${cdpPort}`,
         '--disable-gpu',
         '--no-sandbox',

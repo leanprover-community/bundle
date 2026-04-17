@@ -80,7 +80,8 @@ async function main() {
             extensionTestsPath: path.resolve(__dirname, 'suite', 'index'),
             launchArgs: [
                 projectPath,
-                `--extensions-dir=${path.join(bundleRoot, 'vscodium', 'data', 'extensions')}`,
+                // Do NOT pass --extensions-dir: portable mode must auto-discover
+                // data/extensions/ without help, matching the real student launcher.
                 `--user-data-dir=${path.join(bundleRoot, 'vscodium', 'data', 'user-data')}`,
                 '--disable-gpu',
                 '--no-sandbox',

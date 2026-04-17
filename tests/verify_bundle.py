@@ -59,12 +59,67 @@ def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
     if not vscodium_path.is_file():
         errors.append(f"Missing: vscodium/{vscodium_exe}")
 
-    # Extensions
+    # Extensions — validate both the directory AND the registry.
+    # VSCodium portable mode uses extensions.json to discover installed
+    # extensions; the directory alone is not enough.
     ext_parent = bundle_root / "vscodium" / "data" / "extensions"
     if ext_parent.is_dir():
         ext_dirs = list(ext_parent.glob("leanprover.lean4-*"))
         if not ext_dirs:
             errors.append("Missing lean4 extension in vscodium/data/extensions/")
+        else:
+            ext_dir = ext_dirs[0]
+            # Extension must have package.json with a main entry point
+            ext_pkg = ext_dir / "package.json"
+            if not ext_pkg.is_file():
+                errors.append(f"Missing package.json in {ext_dir.name}")
+            else:
+                try:
+                    pkg = json.loads(ext_pkg.read_text())
+                    main = pkg.get("main", "")
+                    if not main:
+                        errors.append(f"{ext_dir.name}/package.json: missing 'main' field")
+                    else:
+                        # Resolve the main entry (e.g. "./dist/extension" -> dist/extension.js)
+                        main_path = main.lstrip("./")
+                        candidates = [ext_dir / main_path, ext_dir / f"{main_path}.js"]
+                        if not any(c.is_file() for c in candidates):
+                            errors.append(
+                                f"{ext_dir.name}: main entry point '{main}' not found "
+                                f"(checked {', '.join(str(c.relative_to(ext_dir)) for c in candidates)})"
+                            )
+                except json.JSONDecodeError as e:
+                    errors.append(f"{ext_dir.name}/package.json: invalid JSON: {e}")
+
+        # Validate extensions.json registry
+        registry_path = ext_parent / "extensions.json"
+        if not registry_path.is_file():
+            errors.append("Missing extensions.json registry in vscodium/data/extensions/")
+        else:
+            try:
+                registry = json.loads(registry_path.read_text())
+                if not isinstance(registry, list):
+                    errors.append("extensions.json: expected a JSON array")
+                else:
+                    lean4_entries = [
+                        e for e in registry
+                        if e.get("identifier", {}).get("id") == "leanprover.lean4"
+                    ]
+                    if not lean4_entries:
+                        errors.append(
+                            "extensions.json: no entry with identifier 'leanprover.lean4' — "
+                            "VSCodium will not load the extension even though files are on disk"
+                        )
+                    else:
+                        entry = lean4_entries[0]
+                        rel = entry.get("relativeLocation", "")
+                        if rel and not (ext_parent / rel).is_dir():
+                            errors.append(
+                                f"extensions.json: relativeLocation '{rel}' does not exist "
+                                f"in vscodium/data/extensions/"
+                            )
+            except json.JSONDecodeError as e:
+                errors.append(f"extensions.json: invalid JSON: {e}")
     else:
         errors.append("Missing directory: vscodium/data/extensions/")
 
