@@ -64,3 +64,41 @@ test('no notification popups on startup', async () => {
 
     expect(count, 'No notification popups should appear on startup').toBe(0);
 });
+
+test('no Lean toolchain install prompt on first launch', async () => {
+    const page = result.page;
+    await page.waitForSelector('.monaco-workbench', { timeout: 30_000 });
+
+    // The launcher auto-opens a .lean file, which activates the lean4
+    // extension; the extension then queries elan to verify that the
+    // declared toolchain is installed.  If our bundled lean isn't laid
+    // out as elan expects, a modal dialog pops up:
+    //
+    //   "Lean version 'leanprover/lean4:vX.Y.Z' of Lean project '...' is
+    //    not installed.  Do you wish to install it?"
+    //
+    // This is *modal*, so the existing "no notification popups" check
+    // (which only inspects toast notifications) misses it entirely.
+    // Wait long enough for the extension to fully activate.
+    await page.waitForTimeout(20_000);
+
+    await page.screenshot({ path: 'test-results/startup-no-toolchain-prompt.png' });
+
+    // Match by characteristic text from the prompt — works for both modal
+    // dialogs and notification toasts, and survives DOM-class churn.
+    const installPrompt = page.getByText(/is not installed/i).first();
+    const visible = await installPrompt.isVisible().catch(() => false);
+
+    if (visible) {
+        const fullText = await installPrompt.textContent().catch(() => '<unreadable>');
+        console.log(`  Toolchain install prompt visible: ${fullText}`);
+    }
+
+    expect(visible,
+        '"Lean version is not installed" prompt should NOT appear. ' +
+        'If this fails, the bundled Lean toolchain is not in the elan ' +
+        'layout (lean/toolchains/<encoded-name>/) the lean4 extension ' +
+        'expects, so the extension thinks no toolchain is installed and ' +
+        'asks the student to download one.',
+    ).toBe(false);
+});
