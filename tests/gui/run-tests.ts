@@ -66,6 +66,11 @@ async function main() {
     process.env.ELAN_HOME = path.join(bundleRoot, 'lean');
     process.env.LEAN_PATH = buildLeanPath(bundleRoot);
     process.env.BUNDLE_ROOT = bundleRoot;
+    // Force portable mode — the Tier 5 runner bypasses the launcher script
+    // and calls VSCodium directly via @vscode/test-electron, so we have to
+    // set VSCODE_PORTABLE ourselves.  Without this, macOS looks for
+    // "codium-portable-data" and never finds data/.
+    process.env.VSCODE_PORTABLE = path.join(bundleRoot, 'vscodium', 'data');
 
     console.log('=== Tier 5: VSCodium integration smoke test ===');
     console.log(`  VSCodium: ${vscodiumExe}`);
@@ -80,6 +85,12 @@ async function main() {
             extensionTestsPath: path.resolve(__dirname, 'suite', 'index'),
             launchArgs: [
                 projectPath,
+                // Tier 5 runs through @vscode/test-electron, which uses its own
+                // isolated ".vscode-test/extensions" folder and does NOT honor
+                // portable mode.  Point it at the bundle's extensions so the
+                // tests can assert on lean4 extension activation.  (Tier 6
+                // Playwright tests the real student experience via portable
+                // mode — don't copy this flag there.)
                 `--extensions-dir=${path.join(bundleRoot, 'vscodium', 'data', 'extensions')}`,
                 `--user-data-dir=${path.join(bundleRoot, 'vscodium', 'data', 'user-data')}`,
                 '--disable-gpu',

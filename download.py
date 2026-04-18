@@ -329,24 +329,47 @@ def download_lean_toolchain(version: str, platform: str, dest_dir: Path) -> Path
         with zipfile.ZipFile(archive_path) as zf:
             _safe_extract_zip(zf, lean_dir)
     elif archive_name.endswith(".tar.zst"):
+        # macOS bsdtar < libarchive 3.6 doesn't support zstd.  If tar can't
+        # open the .tar.zst directly, decompress with the `zstd` CLI first.
+        tar_source = archive_path
+        try:
+            result = subprocess.run(
+                ["tar", "--list", "-f", str(archive_path)],
+                capture_output=True, text=True, check=True,
+            )
+        except subprocess.CalledProcessError:
+            if shutil.which("zstd") is None:
+                raise RuntimeError(
+                    f"tar cannot read {archive_name} (no zstd support) and "
+                    f"the `zstd` command is not installed.  Install zstd "
+                    f"(e.g. `brew install zstd`) or use a newer tar/libarchive."
+                )
+            tar_source = archive_path.with_suffix("")  # strip .zst
+            subprocess.run(
+                ["zstd", "-d", "-f", str(archive_path), "-o", str(tar_source)],
+                check=True,
+            )
+            archive_path.unlink()
+            result = subprocess.run(
+                ["tar", "--list", "-f", str(tar_source)],
+                capture_output=True, text=True, check=True,
+            )
         # Validate archive members before extracting (tar xf doesn't reject ..)
-        result = subprocess.run(
-            ["tar", "--list", "-f", str(archive_path)],
-            capture_output=True, text=True, check=True,
-        )
         resolved_dest = lean_dir.resolve()
         for member in result.stdout.splitlines():
             if not (resolved_dest / member).resolve().is_relative_to(resolved_dest):
                 raise ValueError(f"Tar entry would extract outside {lean_dir}: {member!r}")
         subprocess.run(
-            ["tar", "xf", str(archive_path), "-C", str(lean_dir)],
+            ["tar", "xf", str(tar_source), "-C", str(lean_dir)],
             check=True,
         )
+        if tar_source != archive_path:
+            tar_source.unlink()
     elif archive_name.endswith(".tar.gz"):
         with tarfile.open(archive_path) as tf:
             _safe_extract_tar(tf, lean_dir)
 
-    archive_path.unlink()
+    archive_path.unlink(missing_ok=True)
 
     # The archive typically extracts to a subdirectory like lean-4.26.0-linux/
     subdirs = [d for d in lean_dir.iterdir() if d.is_dir()]
