@@ -87,26 +87,8 @@ export async function launchVSCodium(options?: {
 
     // Only set test-infrastructure env vars. The launcher script owns
     // PATH, ELAN_HOME, and LEAN_PATH — that's what we're testing.
-    //
-    // Critically, strip the runner's elan from the inherited environment
-    // to mimic a fresh student install.  GitHub macOS/Linux runners have
-    // ~/.elan/bin on PATH from prior Lean steps; without stripping it,
-    // the lean4 extension finds the runner's elan, sees the toolchain
-    // installed in ~/.elan/toolchains/, and never shows the "Lean
-    // version is not installed" prompt that real students hit.  We're
-    // testing whether the BUNDLE works on its own, not whether the
-    // runner happens to have a working Lean.
-    const filteredEnv = Object.fromEntries(
-        Object.entries(process.env).filter(([k]) => k !== 'ELAN_HOME')
-    ) as Record<string, string>;
-    const sep = process.platform === 'win32' ? ';' : ':';
-    if (filteredEnv.PATH) {
-        filteredEnv.PATH = filteredEnv.PATH.split(sep)
-            .filter(p => !/[\\/]\.?elan[\\/]/.test(p) && !p.endsWith('elan/bin') && !p.endsWith('elan\\bin'))
-            .join(sep);
-    }
     const env: Record<string, string> = {
-        ...filteredEnv,
+        ...process.env as Record<string, string>,
         BUNDLE_ROOT: bundleRoot,
         DONT_PROMPT_WSL_INSTALL: '1',
     };
