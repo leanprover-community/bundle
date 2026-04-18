@@ -995,11 +995,11 @@ jobs:
       - name: "Install elan (no toolchain) to simulate fresh student"
         shell: pwsh
         run: |
-          $url = "https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.ps1"
-          $script = Invoke-WebRequest -Uri $url -UseBasicParsing
-          $tmpFile = Join-Path $env:TEMP "elan-init.ps1"
-          [System.IO.File]::WriteAllText($tmpFile, $script.Content)
-          & $tmpFile -y --default-toolchain none
+          $url = "https://github.com/leanprover/elan/releases/download/v4.2.1/elan-x86_64-pc-windows-msvc.zip"
+          $zip = Join-Path $env:TEMP "elan-init.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
+          & "$env:TEMP\elan-init.exe" -y --default-toolchain none
           $elanBin = Join-Path $env:USERPROFILE ".elan\bin"
           echo $elanBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           & "$elanBin\elan.exe" --version
