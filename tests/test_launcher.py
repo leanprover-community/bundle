@@ -408,7 +408,10 @@ class TestBundleLauncherWindows:
         # through to `lean` on PATH rather than getting stuck looking
         # for an elan binary.
         val = result.get("ELAN_HOME", "")
-        assert val == "" or val == "!ELAN_HOME!", (
+        # cmd.exe quirks: `echo !VAR!` prints `!VAR!` when unexpanded,
+        # or `ECHO is on/off.` when VAR is empty.  All three indicate
+        # the variable is not meaningfully set.
+        assert val in ("", "!ELAN_HOME!") or val.startswith("ECHO is "), (
             f"ELAN_HOME should be empty, got: {val!r}"
         )
 

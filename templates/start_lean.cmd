@@ -24,12 +24,15 @@ set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%SystemRoot%\System32;%Sys
 set ELAN_HOME=
 
 :: Register the bundled toolchain with the student's elan if present
-:: (no-op otherwise).  mklink /J creates a directory junction, which
-:: on Windows works without admin privileges, unlike symlinks.
-if exist "%USERPROFILE%\.elan\toolchains" (
+:: (no-op otherwise).  Check for the elan binary rather than the
+:: toolchains/ dir, which doesn't exist on fresh `elan-init
+:: --default-toolchain none` installs.  mklink /J creates a directory
+:: junction, which works on Windows without admin privileges.
+if exist "%USERPROFILE%\.elan\bin\elan.exe" (
     for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "(Get-Content '%BUNDLE_ROOT%\project\lean-toolchain' -Raw).Trim().Replace('/','--').Replace(':','---')"`) do set "TOOLCHAIN_ENCODED=%%A"
     setlocal EnableDelayedExpansion
     if defined TOOLCHAIN_ENCODED if not exist "%USERPROFILE%\.elan\toolchains\!TOOLCHAIN_ENCODED!" (
+        if not exist "%USERPROFILE%\.elan\toolchains" mkdir "%USERPROFILE%\.elan\toolchains"
         mklink /J "%USERPROFILE%\.elan\toolchains\!TOOLCHAIN_ENCODED!" "%BUNDLE_ROOT%\lean" >nul 2>&1
     )
     endlocal
