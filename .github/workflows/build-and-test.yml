@@ -957,6 +957,80 @@ jobs:
           path: tests/gui-playwright/test-results/
           retention-days: 30
 
+  test-macos-gui-fresh:
+    # Same as test-macos-gui but with no elan installed.  Covers the
+    # "fresh Mac, no prior Lean install" student state — the other
+    # macos-gui job exercises elan-installed-without-toolchain.
+    runs-on: macos-latest
+    needs: build-macos-arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-darwin-arm64
+
+      - name: Extract bundle
+        run: |
+          mkdir bundle
+          python -c "
+          import sys, zipfile; sys.path.insert(0, '.')
+          from download import _safe_extract_zip
+          from pathlib import Path
+          with zipfile.ZipFile('bundle-macos-arm64.zip') as zf:
+              _safe_extract_zip(zf, Path('bundle'))
+          "
+
+      - name: Find bundle root
+        id: find-root
+        run: |
+          root=$(find bundle -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BUNDLE_ROOT=$(pwd)/$root" >> "$GITHUB_OUTPUT"
+          echo "Bundle root: $(pwd)/$root"
+
+      - name: "Clear quarantine (as launcher would)"
+        run: |
+          root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
+          xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
+
+      # Sanity-check that no elan exists at this point.  GitHub macOS
+      # runner images are fresh per job, but if a base image change ever
+      # bakes elan in, this guard fails loudly rather than silently
+      # turning into a duplicate of test-macos-gui.
+      - name: "Sanity: no inherited elan"
+        run: |
+          if [ -e "$HOME/.elan" ]; then
+            echo "::error::Runner unexpectedly has ~/.elan — this job needs a clean slate"
+            ls -la "$HOME/.elan"
+            exit 1
+          fi
+
+      - name: "Tier 6: Install Playwright test deps"
+        run: |
+          cd tests/gui-playwright
+          npm ci
+
+      - name: "Tier 6: UI automation tests (infoview + interaction)"
+        timeout-minutes: 15
+        env:
+          BUNDLE_ROOT: ${{ steps.find-root.outputs.BUNDLE_ROOT }}
+        run: |
+          cd tests/gui-playwright
+          npx playwright test --reporter=list
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: tier6-screenshots-macos-fresh
+          path: tests/gui-playwright/test-results/
+          retention-days: 30
+
   test-windows-gui:
     runs-on: windows-latest
     needs: build-windows
@@ -1023,6 +1097,7 @@ jobs:
       - test-windows
       - test-macos
       - test-macos-gui
+      - test-macos-gui-fresh
       - test-windows-gui
     steps:
       - name: Check all jobs passed
