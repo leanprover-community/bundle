@@ -24,19 +24,20 @@ set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%SystemRoot%\System32;%Sys
 set ELAN_HOME=
 
 :: Register the bundled toolchain with the student's elan if present
-:: (no-op otherwise).  Check for the elan binary rather than the
-:: toolchains/ dir, which doesn't exist on fresh `elan-init
-:: --default-toolchain none` installs.  mklink /J creates a directory
-:: junction, which works on Windows without admin privileges.
+:: (no-op otherwise).  New-Item -ItemType Junction creates a directory
+:: junction without admin privileges — equivalent to `mklink /J`.
+:: Done in a single PowerShell invocation to avoid cmd.exe's fragile
+:: `for /f` + `setlocal` delayed-expansion dance.
 if exist "%USERPROFILE%\.elan\bin\elan.exe" (
-    for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "(Get-Content '%BUNDLE_ROOT%\project\lean-toolchain' -Raw).Trim().Replace('/','--').Replace(':','---')"`) do set "TOOLCHAIN_ENCODED=%%A"
-    setlocal EnableDelayedExpansion
-    if defined TOOLCHAIN_ENCODED if not exist "%USERPROFILE%\.elan\toolchains\!TOOLCHAIN_ENCODED!" (
-        if not exist "%USERPROFILE%\.elan\toolchains" mkdir "%USERPROFILE%\.elan\toolchains"
-        mklink /J "%USERPROFILE%\.elan\toolchains\!TOOLCHAIN_ENCODED!" "%BUNDLE_ROOT%\lean" >nul 2>&1
-    )
-    endlocal
-    set TOOLCHAIN_ENCODED=
+    powershell -NoProfile -Command ^
+      "$pin = (Get-Content '%BUNDLE_ROOT%\project\lean-toolchain' -Raw).Trim();" ^
+      "$enc = $pin.Replace('/','--').Replace(':','---');" ^
+      "$tcParent = Join-Path $env:USERPROFILE '.elan\toolchains';" ^
+      "$tcDir = Join-Path $tcParent $enc;" ^
+      "if (-not (Test-Path $tcDir)) {" ^
+      "  New-Item -ItemType Directory -Force -Path $tcParent | Out-Null;" ^
+      "  New-Item -ItemType Junction -Path $tcDir -Target '%BUNDLE_ROOT%\lean' | Out-Null" ^
+      "}" >nul 2>&1
 )
 
 :: Build LEAN_PATH from all package build directories
