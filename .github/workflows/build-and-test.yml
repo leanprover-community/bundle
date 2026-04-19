@@ -325,12 +325,9 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
-      - name: "Install elan (no toolchain) to simulate fresh student"
-        run: |
-          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+      # No elan install here — this runner exercises the "fresh machine,
+      # no prior Lean install" student state.  test-macos-gui covers the
+      # "elan-installed-but-no-toolchain" scenario.
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
@@ -439,12 +436,7 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
-      - name: "Install elan (no toolchain) to simulate fresh student"
-        run: |
-          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+      # No elan install here — covers the no-prior-Lean student state.
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
@@ -991,18 +983,8 @@ jobs:
 
       # Olean timestamps are now preserved by create_zip (4-second advance).
 
-      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
-      - name: "Install elan (no toolchain) to simulate fresh student"
-        shell: pwsh
-        run: |
-          $url = "https://github.com/leanprover/elan/releases/download/v4.2.1/elan-x86_64-pc-windows-msvc.zip"
-          $zip = Join-Path $env:TEMP "elan-init.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
-          & "$env:TEMP\elan-init.exe" -y --default-toolchain none
-          $elanBin = Join-Path $env:USERPROFILE ".elan\bin"
-          echo $elanBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          & "$elanBin\elan.exe" --version
+      # No elan install here — covers the no-prior-Lean Windows student
+      # state.  test-macos-gui exercises the elan-without-toolchain path.
 
       - name: "Tier 6: Install Playwright test deps"
         shell: pwsh
