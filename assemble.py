@@ -743,22 +743,15 @@ def assemble_bundle(
     print("Fixing olean timestamps...")
     _touch_oleans(bundle_project)
 
-    # Strip Lean IR payloads from the .lake build tree. The LSP does not
-    # need them, and we can safely drop them without breaking Lake's trace
-    # freshness check (see prune_ir_from_bundle for why the .ir.hash
-    # sidecars, build/ir/, and .trace files all stay put).
-    # On Windows the lake wrapper mechanism is unreliable (the VS Code
-    # extension may invoke lake.exe directly, bypassing .cmd wrappers),
-    # so we skip IR pruning there.
-    if not platform.startswith("windows"):
-        print("Pruning Lean IR payloads from bundle...")
-        n_pruned, bytes_freed = prune_ir_from_bundle(bundle_project)
-        print(f"  {n_pruned} *.ir files removed ({bytes_freed / (1024 * 1024):.1f} MB freed)")
-        if n_pruned > 0:
-            print("Installing lake wrapper to strip .ir from setup-file output...")
-            install_lake_wrapper(bundle_dir, platform)
-    else:
-        print("Skipping IR pruning on Windows (lake wrapper not supported)")
+    # NOTE: We do not prune .ir payloads.  The original assumption that
+    # "the LSP only needs .olean/.ilean" is wrong for any module that
+    # registers compiled runtime code — delaborators, tactics, macros,
+    # widgets.  When Lean elaborates a file that transitively imports
+    # such a module (e.g. Mathlib.Util.Delaborators), it invokes the
+    # compiled functions and needs the .ir payload at runtime, producing
+    # `failed to open file '.../Delaborators.ir'` in the infoview
+    # otherwise.  The lake `setup-file` wrapper is correspondingly
+    # unnecessary and no longer installed.
 
     # Determine which file to open on launch.
     if open_file is None:
