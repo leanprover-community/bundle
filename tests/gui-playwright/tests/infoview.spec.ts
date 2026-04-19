@@ -149,3 +149,42 @@ test('project file activates infoview', async () => {
 
     await page.screenshot({ path: 'test-results/project-exercise.png' });
 });
+
+test('infoview shows no missing-file errors', async () => {
+    // The infoview renders import/elaboration errors as "Messages" entries
+    // like "failed to open file '...'" or "missing data file for module ...".
+    // These show up when the bundle was trimmed too aggressively — e.g.
+    // stripping .ir payloads that the LSP actually loads at elaboration
+    // time for modules registering delaborators / tactics / widgets.
+    //
+    // A student can't do anything to recover from this, so CI must fail
+    // loudly when the bundled .lake/ is incomplete for the project's
+    // import closure.
+    const infoviewFrame = await findInfoviewFrame(result.browser, 30_000);
+
+    // Give any lazy imports a moment to surface their errors.
+    await infoviewFrame.waitForTimeout(5_000);
+
+    const text = await infoviewFrame.evaluate(() =>
+        document.body?.innerText || ''
+    );
+
+    const badPatterns = [
+        /failed to open file/i,
+        /missing data file for module/i,
+    ];
+    const hits = badPatterns
+        .map(p => text.match(p)?.[0])
+        .filter((m): m is string => !!m);
+
+    if (hits.length > 0) {
+        // Log the surrounding infoview content so CI failures are diagnosable.
+        console.log(`  Infoview text (first 2000 chars):\n${text.slice(0, 2000)}`);
+    }
+
+    expect(hits,
+        'Infoview must not report missing-file errors.  If this fails, ' +
+        'the bundle stripped files the LSP needs at runtime — likely a ' +
+        'too-aggressive .ir prune or .lake import-closure trim.',
+    ).toEqual([]);
+});
