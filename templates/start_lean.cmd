@@ -9,16 +9,15 @@ set BUNDLE_ROOT=%BUNDLE_ROOT:~0,-1%
 :: detection so extensions and settings load consistently across OSes.
 set VSCODE_PORTABLE=%BUNDLE_ROOT%\vscodium\data
 
-:: Reset PATH to a minimal known-good value (bundle + Windows essentials).
-:: This prevents the lean4 VS Code extension from finding the student's
-:: pre-existing elan (%USERPROFILE%\.elan\bin\elan.exe from a prior Lean
-:: course) and popping a modal "Lean version ... is not installed"
-:: dialog.  We deliberately drop the student's customised PATH: inside
-:: VSCodium the bundle is self-contained, so nothing else is needed.
+:: Reset PATH to a minimal known-good value (bundle + Windows essentials)
+:: and clear ELAN_HOME.  This prevents the lean4 VS Code extension from
+:: finding the student's pre-existing elan (%USERPROFILE%\.elan\bin\elan.exe
+:: from a prior Lean course) and popping a modal "Lean version ... is
+:: not installed" dialog.  With no elan available and no ELAN_HOME to
+:: confuse it, the extension falls through to `lean` on PATH — our
+:: bundled one.
 set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem
-
-:: Point elan (if the extension somehow still finds one) at our bundle.
-set ELAN_HOME=%BUNDLE_ROOT%\lean
+set ELAN_HOME=
 
 :: Build LEAN_PATH from all package build directories
 set LEAN_PATH=%BUNDLE_ROOT%\lean\lib\lean;%BUNDLE_ROOT%\project\.lake\build\lib\lean
