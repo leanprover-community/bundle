@@ -10,10 +10,21 @@ BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # path logic and works uniformly on Linux, macOS, and Windows.
 export VSCODE_PORTABLE="$BUNDLE_ROOT/vscodium/data"
 
+# Strip any inherited elan from PATH so the lean4 VS Code extension uses
+# the bundled Lean directly.  If the student has ~/.elan/bin on PATH from
+# a prior Lean course, the extension finds their elan, queries it about
+# our toolchain, and (since they don't have our exact version installed)
+# pops a modal "Lean version ... is not installed" dialog.  Removing
+# elan from PATH makes the extension fall back to `lean` on PATH, which
+# is our bundled one.
+PATH="$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -v '\.elan/' | grep -v '/elan/bin$' | paste -sd: -)"
+# Also drop any inherited ELAN_HOME — we set our own below.
+unset ELAN_HOME
+
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 
-# Prevent elan from interfering
+# Point elan (if the extension still finds one somewhere) at our bundle.
 export ELAN_HOME="$BUNDLE_ROOT/lean"
 
 # Build LEAN_PATH from all package build directories
