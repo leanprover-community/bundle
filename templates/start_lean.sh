@@ -10,19 +10,41 @@ BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # path logic and works uniformly on Linux, macOS, and Windows.
 export VSCODE_PORTABLE="$BUNDLE_ROOT/vscodium/data"
 
-# Strip any inherited elan from PATH and environment so the lean4 VS
-# Code extension uses the bundled Lean directly.  If the student has
-# ~/.elan/bin on PATH from a prior Lean course, the extension finds
-# their elan, queries it about our toolchain, and (since they don't
-# have our exact version installed) pops a modal "Lean version ... is
-# not installed" dialog.  Removing elan from PATH — and *not* setting
-# ELAN_HOME — makes the extension fall through to `lean` on PATH,
-# which is our bundled one.
+# If the student has a pre-existing elan install, the lean4 VS Code
+# extension unconditionally prepends $HOME/.elan/bin to PATH on
+# activation and queries that elan about the project's toolchain.
+# When elan doesn't have our exact toolchain installed, it pops a
+# modal "Lean version ... is not installed" dialog.
+#
+# Fix: symlink the bundled Lean into the student's elan toolchains
+# directory.  Elan then reports the toolchain as installed and the
+# extension proceeds normally.  The symlink reuses our binaries, so
+# no disk duplication.
+#
+# (We also strip elan from PATH and clear ELAN_HOME defensively for
+# students with no elan installed at all: if ~/.elan doesn't exist,
+# the extension's PATH prepend is a no-op and it falls through to
+# `lean` on PATH, which is our bundled one.)
 PATH="$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -v '\.elan/' | grep -v '/elan/bin$' | paste -sd: -)"
 unset ELAN_HOME
 
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
+
+# Register the bundled toolchain with the student's elan (no-op if
+# they don't have elan, or if a toolchain with this name is already
+# installed).  This bypasses `elan toolchain link` — which refuses
+# release-format names like leanprover/lean4:v4.26.0 — by creating
+# the directory elan expects to find directly.
+if [ -d "$HOME/.elan/toolchains" ]; then
+    _toolchain_pin=$(cat "$BUNDLE_ROOT/project/lean-toolchain" 2>/dev/null | tr -d '[:space:]')
+    _toolchain_encoded=$(printf '%s' "$_toolchain_pin" | sed 's|/|--|g; s|:|---|g')
+    _toolchain_dir="$HOME/.elan/toolchains/$_toolchain_encoded"
+    if [ -n "$_toolchain_encoded" ] && [ ! -e "$_toolchain_dir" ] && [ ! -L "$_toolchain_dir" ]; then
+        ln -s "$BUNDLE_ROOT/lean" "$_toolchain_dir" 2>/dev/null || true
+    fi
+    unset _toolchain_pin _toolchain_encoded _toolchain_dir
+fi
 
 # Build LEAN_PATH from all package build directories
 LEAN_PATH="$BUNDLE_ROOT/lean/lib/lean:$BUNDLE_ROOT/project/.lake/build/lib/lean"
