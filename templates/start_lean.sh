@@ -35,20 +35,13 @@ export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 # they don't have elan).  Bypasses `elan toolchain link` — which
 # refuses release-format names like leanprover/lean4:v4.26.0 — by
 # creating the directory elan expects to find directly.
-#
-# Check for ~/.elan/bin/elan (the binary), not ~/.elan/toolchains/,
-# because fresh elan installs with --default-toolchain none don't
-# create the toolchains/ subdir until the first install.
-if [ -x "$HOME/.elan/bin/elan" ]; then
-    _toolchain_pin=$(cat "$BUNDLE_ROOT/project/lean-toolchain" 2>/dev/null | tr -d '[:space:]')
-    _toolchain_encoded=$(printf '%s' "$_toolchain_pin" | sed 's|/|--|g; s|:|---|g')
-    _toolchain_dir="$HOME/.elan/toolchains/$_toolchain_encoded"
-    if [ -n "$_toolchain_encoded" ] && [ ! -e "$_toolchain_dir" ] && [ ! -L "$_toolchain_dir" ]; then
-        mkdir -p "$HOME/.elan/toolchains"
-        ln -s "$BUNDLE_ROOT/lean" "$_toolchain_dir" 2>/dev/null || true
-    fi
-    unset _toolchain_pin _toolchain_encoded _toolchain_dir
+# The encoded name is substituted at bundle assembly time.
+_TC_ENC="@@TOOLCHAIN_ENCODED@@"
+if [ -n "$_TC_ENC" ] && [ -x "$HOME/.elan/bin/elan" ] && [ ! -e "$HOME/.elan/toolchains/$_TC_ENC" ]; then
+    mkdir -p "$HOME/.elan/toolchains"
+    ln -s "$BUNDLE_ROOT/lean" "$HOME/.elan/toolchains/$_TC_ENC" 2>/dev/null || true
 fi
+unset _TC_ENC
 
 # Build LEAN_PATH from all package build directories
 LEAN_PATH="$BUNDLE_ROOT/lean/lib/lean:$BUNDLE_ROOT/project/.lake/build/lib/lean"

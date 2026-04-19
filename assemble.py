@@ -779,11 +779,18 @@ def assemble_bundle(
         launcher_src = templates_dir / "start_lean.sh"
         launcher_dst = bundle_dir / "Start_Lean.sh"
 
-    # Substitute @@OPEN_FILE@@ placeholder with the selected file (or
-    # empty string if none).  This happens at assembly time so the
-    # launcher doesn't need to scan for files at runtime.
+    # Substitute placeholders in the launcher template at assembly time
+    # so the launcher script doesn't need to scan files or parse strings
+    # at runtime (cmd.exe parsing is fragile).
+    #
+    #   @@OPEN_FILE@@        - filename to open on launch (or empty)
+    #   @@TOOLCHAIN_ENCODED@@ - elan-encoded toolchain dir name, e.g.
+    #                          leanprover/lean4:v4.26.0 -> leanprover--lean4---v4.26.0
+    toolchain_pin = (project_dir / "lean-toolchain").read_text().strip()
+    toolchain_encoded = toolchain_pin.replace("/", "--").replace(":", "---")
     launcher_text = launcher_src.read_text()
     launcher_text = launcher_text.replace("@@OPEN_FILE@@", open_file or "")
+    launcher_text = launcher_text.replace("@@TOOLCHAIN_ENCODED@@", toolchain_encoded)
     launcher_dst.write_text(launcher_text)
     if not platform.startswith("windows"):
         launcher_dst.chmod(0o755)

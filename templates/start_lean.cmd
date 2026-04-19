@@ -24,12 +24,16 @@ set PATH=%BUNDLE_ROOT%\lean\bin;%BUNDLE_ROOT%\git\cmd;%SystemRoot%\System32;%Sys
 set ELAN_HOME=
 
 :: Register the bundled toolchain with the student's elan if present
-:: (no-op otherwise).  New-Item -ItemType Junction creates a directory
-:: junction without admin privileges — equivalent to `mklink /J`.
-:: Done in a single PowerShell invocation on one line: cmd.exe's `^`
-:: line continuation is unreliable inside `( ... )` blocks and can
-:: hang the script (seen as VSCodium never launching on Windows CI).
-if exist "%USERPROFILE%\.elan\bin\elan.exe" powershell -NoProfile -Command "$pin = (Get-Content '%BUNDLE_ROOT%\project\lean-toolchain' -Raw).Trim(); $enc = $pin.Replace('/','--').Replace(':','---'); $tcParent = Join-Path $env:USERPROFILE '.elan\toolchains'; $tcDir = Join-Path $tcParent $enc; if (-not (Test-Path $tcDir)) { New-Item -ItemType Directory -Force -Path $tcParent | Out-Null; New-Item -ItemType Junction -Path $tcDir -Target '%BUNDLE_ROOT%\lean' | Out-Null }" >nul 2>&1
+:: (no-op otherwise).  The encoded name is substituted at bundle
+:: assembly time so the launcher doesn't have to parse strings at
+:: runtime (cmd.exe string handling is fragile).
+:: `mklink /J` creates a directory junction without admin privileges.
+set TOOLCHAIN_ENCODED=@@TOOLCHAIN_ENCODED@@
+if exist "%USERPROFILE%\.elan\bin\elan.exe" if not exist "%USERPROFILE%\.elan\toolchains\%TOOLCHAIN_ENCODED%" if not "%TOOLCHAIN_ENCODED%"=="" (
+    if not exist "%USERPROFILE%\.elan\toolchains" mkdir "%USERPROFILE%\.elan\toolchains" >nul 2>&1
+    mklink /J "%USERPROFILE%\.elan\toolchains\%TOOLCHAIN_ENCODED%" "%BUNDLE_ROOT%\lean" >nul 2>&1
+)
+set TOOLCHAIN_ENCODED=
 
 :: Build LEAN_PATH from all package build directories
 set LEAN_PATH=%BUNDLE_ROOT%\lean\lib\lean;%BUNDLE_ROOT%\project\.lake\build\lib\lean

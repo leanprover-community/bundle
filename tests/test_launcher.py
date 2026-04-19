@@ -62,6 +62,9 @@ env > "$BUNDLE_ROOT/_test_env.txt"
 def _patch_unix_launcher(template: Path, output: Path) -> None:
     """Replace the VSCodium launch block with an environment probe."""
     text = template.read_text()
+    # Substitute @@-placeholders that assemble.py would normally fill in.
+    text = text.replace("@@OPEN_FILE@@", "")
+    text = text.replace("@@TOOLCHAIN_ENCODED@@", "")
     # Replace from "# Launch VSCodium\n" (exact line) through end of file.
     # This must NOT match "# Launch VSCodium with Lean 4..." on line 2.
     text = re.sub(
@@ -180,6 +183,9 @@ WINDOWS_PROBE = """\
 def _patch_windows_launcher(template: Path, output: Path) -> None:
     """Replace the VSCodium launch block with an environment probe."""
     text = template.read_text()
+    # Substitute @@-placeholders that assemble.py would normally fill in.
+    text = text.replace("@@OPEN_FILE@@", "")
+    text = text.replace("@@TOOLCHAIN_ENCODED@@", "")
     # Replace from ":: Launch VSCodium" through end of file.
     # Use a lambda to avoid re.sub interpreting backslashes in the
     # replacement string as group references (\p → bad escape).
