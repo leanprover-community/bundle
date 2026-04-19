@@ -232,10 +232,11 @@ class TestLauncherWindows:
         # The launcher deliberately clears ELAN_HOME — if it stays set,
         # the lean4 VS Code extension tries to use elan as configured
         # there and gets stuck when there's no elan binary at that path.
-        # cmd.exe `echo !VAR!` prints literal `!VAR!` when VAR is unset,
-        # but with EnableDelayedExpansion it prints empty.
+        # cmd.exe quirks: `echo !VAR!` may print the literal `!VAR!`, or
+        # `ECHO is on/off.` when VAR is empty.  All three indicate
+        # the variable is not meaningfully set.
         val = result.get("ELAN_HOME", "")
-        assert val == "" or val == "!ELAN_HOME!", (
+        assert val in ("", "!ELAN_HOME!") or val.startswith("ECHO is "), (
             f"ELAN_HOME should be empty/unset, got: {val!r}"
         )
 
