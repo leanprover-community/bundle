@@ -325,6 +325,13 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
+      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
+      - name: "Install elan (no toolchain) to simulate fresh student"
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
       - name: "Tier 6: Install Playwright test deps"
         run: |
           cd tests/gui-playwright
@@ -431,6 +438,13 @@ jobs:
 
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
+      - name: "Install elan (no toolchain) to simulate fresh student"
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
@@ -915,6 +929,21 @@ jobs:
           root="${{ steps.find-root.outputs.BUNDLE_ROOT }}"
           xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
 
+      # Install elan but no toolchain.  Mimics the most common student
+      # state: they did a Lean course before and have ~/.elan/bin/elan
+      # on their PATH from a prior install, but no toolchain matching
+      # the project's lean-toolchain pin.  Without this, the lean4
+      # extension can't find elan on a clean runner and falls back to
+      # using the bundled `lean` directly — masking the bug where the
+      # bundle isn't laid out as elan expects.
+      - name: "Install elan (no toolchain) to simulate fresh student"
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/v4.2.1/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+          # Sanity: elan should be installed but no toolchains present.
+          "$HOME/.elan/bin/elan" --version
+          "$HOME/.elan/bin/elan" toolchain list || true
 
       - name: "Tier 6: Install Playwright test deps"
         run: |
@@ -961,6 +990,19 @@ jobs:
           echo "Bundle root: $($root.FullName)"
 
       # Olean timestamps are now preserved by create_zip (4-second advance).
+
+      # Mimic a student with elan but no matching toolchain (see test-macos-gui).
+      - name: "Install elan (no toolchain) to simulate fresh student"
+        shell: pwsh
+        run: |
+          $url = "https://github.com/leanprover/elan/releases/download/v4.2.1/elan-x86_64-pc-windows-msvc.zip"
+          $zip = Join-Path $env:TEMP "elan-init.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
+          & "$env:TEMP\elan-init.exe" -y --default-toolchain none
+          $elanBin = Join-Path $env:USERPROFILE ".elan\bin"
+          echo $elanBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & "$elanBin\elan.exe" --version
 
       - name: "Tier 6: Install Playwright test deps"
         shell: pwsh

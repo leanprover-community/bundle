@@ -54,6 +54,23 @@ def verify(bundle_root: Path, platform: str = "windows") -> list[str]:
         if not (bundle_root / r).is_dir():
             errors.append(f"Missing directory: {r}")
 
+    # --- Launcher must strip elan from PATH ---
+    # If a student has elan from a previous Lean course, the lean4 VS
+    # Code extension will find it, query it about our toolchain, and
+    # (when the student doesn't have our version installed) pop a modal
+    # "Lean version ... is not installed" dialog.  The launcher must
+    # scrub elan-containing PATH entries before launching VSCodium so
+    # the extension uses the bundled lean directly.
+    launcher_path = bundle_root / launcher
+    if launcher_path.is_file():
+        text = launcher_path.read_text(errors="ignore")
+        if "elan" not in text.lower():
+            errors.append(
+                f"{launcher}: expected elan-stripping logic "
+                "(students with prior elan installs will hit the "
+                '"Lean version not installed" prompt otherwise)'
+            )
+
     # --- VSCodium ---
     vscodium_path = bundle_root / "vscodium" / vscodium_exe
     if not vscodium_path.is_file():

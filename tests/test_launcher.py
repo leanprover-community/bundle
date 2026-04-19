@@ -62,6 +62,9 @@ env > "$BUNDLE_ROOT/_test_env.txt"
 def _patch_unix_launcher(template: Path, output: Path) -> None:
     """Replace the VSCodium launch block with an environment probe."""
     text = template.read_text()
+    # Substitute @@-placeholders that assemble.py would normally fill in.
+    text = text.replace("@@OPEN_FILE@@", "")
+    text = text.replace("@@TOOLCHAIN_ENCODED@@", "")
     # Replace from "# Launch VSCodium\n" (exact line) through end of file.
     # This must NOT match "# Launch VSCodium with Lean 4..." on line 2.
     text = re.sub(
@@ -114,9 +117,24 @@ class TestLauncherUnix:
             f"PATH should start with {lean_bin}:, got: {result['PATH'][:200]}"
         )
 
-    def test_elan_home(self, result: dict[str, str]) -> None:
-        root = result["_bundle_root"]
-        assert result["ELAN_HOME"] == f"{root}/lean"
+    def test_elan_home_not_set(self, result: dict[str, str]) -> None:
+        # The launcher deliberately unsets ELAN_HOME — if it stays set,
+        # the lean4 VS Code extension tries to use elan as configured
+        # there and gets stuck when there's no elan binary at that path.
+        assert "ELAN_HOME" not in result, (
+            f"ELAN_HOME should be unset, got: {result.get('ELAN_HOME')!r}"
+        )
+
+    def test_path_has_no_elan(self, result: dict[str, str]) -> None:
+        # The launcher strips any inherited elan-containing path entries
+        # so the lean4 extension can't find a student's prior elan install.
+        for entry in result["PATH"].split(":"):
+            assert ".elan/" not in entry, (
+                f"PATH entry contains .elan/: {entry!r}"
+            )
+            assert not entry.endswith("/elan/bin"), (
+                f"PATH entry ends with /elan/bin: {entry!r}"
+            )
 
     def test_lean_path_contains_toolchain_lib(self, result: dict[str, str]) -> None:
         root = result["_bundle_root"]
@@ -165,6 +183,9 @@ WINDOWS_PROBE = """\
 def _patch_windows_launcher(template: Path, output: Path) -> None:
     """Replace the VSCodium launch block with an environment probe."""
     text = template.read_text()
+    # Substitute @@-placeholders that assemble.py would normally fill in.
+    text = text.replace("@@OPEN_FILE@@", "")
+    text = text.replace("@@TOOLCHAIN_ENCODED@@", "")
     # Replace from ":: Launch VSCodium" through end of file.
     # Use a lambda to avoid re.sub interpreting backslashes in the
     # replacement string as group references (\p → bad escape).
@@ -213,8 +234,22 @@ class TestLauncherWindows:
         path_val = result["PATH"]
         assert "\\git\\cmd" in path_val
 
-    def test_elan_home(self, result: dict[str, str]) -> None:
-        assert result["ELAN_HOME"].endswith("\\lean")
+    def test_elan_home_not_set(self, result: dict[str, str]) -> None:
+        # The launcher deliberately clears ELAN_HOME — if it stays set,
+        # the lean4 VS Code extension tries to use elan as configured
+        # there and gets stuck when there's no elan binary at that path.
+        # cmd.exe quirks: `echo !VAR!` may print the literal `!VAR!`, or
+        # `ECHO is on/off.` when VAR is empty.  All three indicate
+        # the variable is not meaningfully set.
+        val = result.get("ELAN_HOME", "")
+        assert val in ("", "!ELAN_HOME!") or val.startswith("ECHO is "), (
+            f"ELAN_HOME should be empty/unset, got: {val!r}"
+        )
+
+    def test_path_has_no_elan(self, result: dict[str, str]) -> None:
+        for entry in result["PATH"].split(";"):
+            assert "\\.elan\\" not in entry, f"PATH entry contains .elan\\: {entry!r}"
+            assert not entry.endswith("\\elan\\bin"), f"PATH entry ends with elan\\bin: {entry!r}"
 
     def test_lean_path_contains_toolchain_lib(self, result: dict[str, str]) -> None:
         entries = result["LEAN_PATH"].split(";")
@@ -310,8 +345,16 @@ class TestBundleLauncherUnix:
     def test_path_contains_lean_bin(self, result: dict[str, str]) -> None:
         assert "/lean/bin" in result["PATH"]
 
-    def test_elan_home_exists(self, result: dict[str, str]) -> None:
-        assert Path(result["ELAN_HOME"]).is_dir()
+    def test_elan_home_unset(self, result: dict[str, str]) -> None:
+        # Launcher must unset ELAN_HOME so the lean4 extension falls
+        # through to `lean` on PATH rather than getting stuck looking
+        # for an elan binary.
+        assert "ELAN_HOME" not in result
+
+    def test_path_has_no_elan(self, result: dict[str, str]) -> None:
+        for entry in result["PATH"].split(":"):
+            assert ".elan/" not in entry, f"PATH entry contains .elan/: {entry!r}"
+            assert not entry.endswith("/elan/bin"), f"PATH entry ends with /elan/bin: {entry!r}"
 
     def test_lean_path_dirs_exist(self, result: dict[str, str]) -> None:
         for entry in result["LEAN_PATH"].split(":"):
@@ -367,8 +410,22 @@ class TestBundleLauncherWindows:
     def test_path_contains_lean_bin(self, result: dict[str, str]) -> None:
         assert "\\lean\\bin" in result["PATH"]
 
-    def test_elan_home_exists(self, result: dict[str, str]) -> None:
-        assert Path(result["ELAN_HOME"]).is_dir()
+    def test_elan_home_cleared(self, result: dict[str, str]) -> None:
+        # Launcher clears ELAN_HOME so the lean4 extension falls
+        # through to `lean` on PATH rather than getting stuck looking
+        # for an elan binary.
+        val = result.get("ELAN_HOME", "")
+        # cmd.exe quirks: `echo !VAR!` prints `!VAR!` when unexpanded,
+        # or `ECHO is on/off.` when VAR is empty.  All three indicate
+        # the variable is not meaningfully set.
+        assert val in ("", "!ELAN_HOME!") or val.startswith("ECHO is "), (
+            f"ELAN_HOME should be empty, got: {val!r}"
+        )
+
+    def test_path_has_no_elan(self, result: dict[str, str]) -> None:
+        for entry in result["PATH"].split(";"):
+            assert "\\.elan\\" not in entry, f"PATH entry contains .elan\\: {entry!r}"
+            assert not entry.endswith("\\elan\\bin"), f"PATH entry ends with elan\\bin: {entry!r}"
 
     def test_lean_path_dirs_exist(self, result: dict[str, str]) -> None:
         for entry in result["LEAN_PATH"].split(";"):

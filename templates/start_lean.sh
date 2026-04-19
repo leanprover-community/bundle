@@ -10,11 +10,38 @@ BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # path logic and works uniformly on Linux, macOS, and Windows.
 export VSCODE_PORTABLE="$BUNDLE_ROOT/vscodium/data"
 
+# If the student has a pre-existing elan install, the lean4 VS Code
+# extension unconditionally prepends $HOME/.elan/bin to PATH on
+# activation and queries that elan about the project's toolchain.
+# When elan doesn't have our exact toolchain installed, it pops a
+# modal "Lean version ... is not installed" dialog.
+#
+# Fix: symlink the bundled Lean into the student's elan toolchains
+# directory.  Elan then reports the toolchain as installed and the
+# extension proceeds normally.  The symlink reuses our binaries, so
+# no disk duplication.
+#
+# (We also strip elan from PATH and clear ELAN_HOME defensively for
+# students with no elan installed at all: if ~/.elan doesn't exist,
+# the extension's PATH prepend is a no-op and it falls through to
+# `lean` on PATH, which is our bundled one.)
+PATH="$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -v '\.elan/' | grep -v '/elan/bin$' | paste -sd: -)"
+unset ELAN_HOME
+
 # Add lean to PATH
 export PATH="$BUNDLE_ROOT/lean/bin:$PATH"
 
-# Prevent elan from interfering
-export ELAN_HOME="$BUNDLE_ROOT/lean"
+# Register the bundled toolchain with the student's elan (no-op if
+# they don't have elan).  Bypasses `elan toolchain link` — which
+# refuses release-format names like leanprover/lean4:v4.26.0 — by
+# creating the directory elan expects to find directly.
+# The encoded name is substituted at bundle assembly time.
+_TC_ENC="@@TOOLCHAIN_ENCODED@@"
+if [ -n "$_TC_ENC" ] && [ -x "$HOME/.elan/bin/elan" ] && [ ! -e "$HOME/.elan/toolchains/$_TC_ENC" ]; then
+    mkdir -p "$HOME/.elan/toolchains"
+    ln -s "$BUNDLE_ROOT/lean" "$HOME/.elan/toolchains/$_TC_ENC" 2>/dev/null || true
+fi
+unset _TC_ENC
 
 # Build LEAN_PATH from all package build directories
 LEAN_PATH="$BUNDLE_ROOT/lean/lib/lean:$BUNDLE_ROOT/project/.lake/build/lib/lean"
