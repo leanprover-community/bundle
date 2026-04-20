@@ -80,11 +80,21 @@ Students need none of these.
 --work-dir PATH
     Working directory for downloads (default: temp dir)
 
+--ref REF
+    Git ref (branch or tag) to checkout
+
 --vscodium-version VERSION
     Pin VSCodium version (default: latest)
 
 --extension-version VERSION
     Pin lean4 extension version (default: latest)
+
+--include [PATTERN ...]
+    Additional file patterns to copy from the project (e.g. '*.json' 'data/')
+
+--open-file NAME
+    .lean file to auto-open on launch (default: first .lean file in
+    project root, alphabetically, excluding lakefile.lean)
 
 --no-zip
     Assemble the bundle directory without creating a zip
@@ -123,7 +133,12 @@ MDD154-bundle/
 3. Uses `lean --src-deps` to compute the transitive import closure
 4. Copies only the needed modules' build artifacts (`.olean`, `.ilean`, etc.) into the bundle, skipping the thousands of Mathlib modules that aren't transitively imported
 5. Trims the Lean toolchain (removes clang, LLVM, ~500 MB saved)
-6. Creates a launcher script that sets PATH, LEAN_PATH, ELAN_HOME
+6. Creates a launcher script that sets `PATH`, `LEAN_PATH`, and
+   `VSCODE_PORTABLE` (no `ELAN_HOME` — that would confuse the lean4
+   extension's elan probing), and registers the bundled Lean in
+   `~/.elan/toolchains/<encoded-name>/` (symlink on Unix, junction on
+   Windows) so students with a prior elan install don't get a "Lean
+   version is not installed" dialog
 7. Packages everything into a zip
 
 ## Testing
@@ -163,6 +178,18 @@ python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --
   dependencies so lake doesn't try to run git. This can be removed once lake
   supports an offline mode
   ([lean4#13101](https://github.com/leanprover/lean4/issues/13101)).
+
+- **Writes to the student's `~/.elan/toolchains/`.** When the student
+  launches the bundle and they already have elan installed, the launcher
+  creates a symlink (Unix) or directory junction (Windows) at
+  `~/.elan/toolchains/<encoded-name>/` pointing into the bundle, so
+  elan reports the project's toolchain as installed. This is necessary
+  because the lean4 VS Code extension unconditionally prepends
+  `~/.elan/bin` to PATH during activation and queries elan; without our
+  symlink, it pops a modal "Lean version is not installed" dialog.
+  Side effect: if the student later deletes the bundle, they'll have a
+  dangling symlink in `~/.elan/toolchains/` until they remove it by
+  hand or via `elan toolchain uninstall`.
 
 ## Pinned versions
 
