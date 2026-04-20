@@ -36,10 +36,29 @@ screenshots to [GitHub Pages](https://leanprover-community.github.io/bundle/).
 </tr>
 </table>
 
+## Quick start
+
+Install the tool with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install git+https://github.com/leanprover-community/bundle
+```
+
+That puts a `lean-bundle` CLI on your `PATH`.  Build a bundle for your
+current platform (auto-detected):
+
+```bash
+lean-bundle https://github.com/PatrickMassot/MDD154
+```
+
+The resulting `MDD154-bundle-<platform>.zip` lands in your current
+directory.  Send it to students; they unzip it and double-click
+`Start_Lean`.
+
 ## Usage
 
 ```bash
-python bundle.py https://github.com/PatrickMassot/MDD154 --platform windows
+lean-bundle https://github.com/PatrickMassot/MDD154 --platform windows
 ```
 
 This produces `MDD154-bundle-windows.zip` containing:

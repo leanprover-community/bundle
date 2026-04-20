@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lean-bundle"
+version = "0.1.0"
+description = "Create self-contained, offline Lean 4 bundles for teaching"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "leanprover-community" },
+]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Code Generators",
+]
+
+[project.urls]
+Homepage = "https://github.com/leanprover-community/bundle"
+Repository = "https://github.com/leanprover-community/bundle"
+
+[project.scripts]
+lean-bundle = "bundle:main"
+
+# Flat-layout: the entry point and its deps are top-level modules next
+# to data dirs (templates/, shim/).  Wheel ships them at site-packages
+# root so `Path(__file__).parent / "templates"` continues to resolve.
+[tool.hatch.build.targets.wheel]
+only-include = [
+    "bundle.py",
+    "assemble.py",
+    "download.py",
+    "import_closure.py",
+    "templates",
+    "shim",
+]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = ""
