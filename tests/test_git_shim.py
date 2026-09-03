@@ -192,16 +192,8 @@ class TestUnknownSubcommands:
         )
 
 
-def _have_cross_compiler() -> bool:
-    """True iff an explicit PE cross-compiler is on PATH."""
-    for name in ("x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-cc", "zig"):
-        if shutil.which(name):
-            return True
-    return False
-
-
 class TestBuildGitShim:
-    """Exercise the download.build_git_shim helper end-to-end."""
+    """Exercise the bundled-leanc contract of ``build_git_shim``."""
 
     def test_returns_none_on_non_windows(self, tmp_path: Path) -> None:
         from download import build_git_shim
@@ -209,54 +201,56 @@ class TestBuildGitShim:
         assert build_git_shim(tmp_path, "linux-x64") is None
         assert build_git_shim(tmp_path, "darwin-arm64") is None
 
-    def test_builds_for_windows(self, tmp_path: Path) -> None:
-        """Full build via ``build_git_shim`` — requires either a real PE
-        cross-compiler (mingw / zig) or a native Windows host. On
-        macOS/Linux without mingw or zig, the helper correctly refuses
-        to fall through to native gcc/clang."""
+    def test_windows_requires_lean_toolchain(self, tmp_path: Path) -> None:
         from download import build_git_shim
 
-        if not _have_cross_compiler() and sys.platform != "win32":
-            with pytest.raises(RuntimeError, match="No C compiler found"):
-                build_git_shim(tmp_path, "windows")
-            return
+        with pytest.raises(RuntimeError, match="requires the Lean toolchain"):
+            build_git_shim(tmp_path, "windows")
 
-        out = build_git_shim(tmp_path, "windows")
-        assert out is not None
-        assert out.is_file()
-        assert out.name == "git.exe"
-        assert out.stat().st_size > 0
+    def test_windows_requires_bundled_leanc(self, tmp_path: Path) -> None:
+        from download import build_git_shim
 
-        # Must be a real PE image — not an ELF/Mach-O wearing a .exe hat.
-        with open(out, "rb") as f:
-            dos = f.read(0x40)
-        assert dos[:2] == b"MZ", f"not a PE (DOS magic): {dos[:4]!r}"
-        e_lfanew = int.from_bytes(dos[0x3C:0x40], "little")
-        with open(out, "rb") as f:
-            f.seek(e_lfanew)
-            sig = f.read(4)
-        assert sig == b"PE\x00\x00", f"not a PE (bad PE sig): {sig!r}"
+        lean_dir = tmp_path / "lean"
+        lean_dir.mkdir()
+        with pytest.raises(RuntimeError, match=r"missing .*leanc\.exe"):
+            build_git_shim(tmp_path, "windows", lean_dir=lean_dir)
 
-    def test_native_non_windows_compiler_is_rejected(
+    def test_builds_with_bundled_leanc(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If someone removes the cross-only guard and a native compiler
-        produces an ELF/Mach-O binary, the PE signature check should
-        catch it loudly. Simulate that by patching
-        ``_find_git_shim_compiler`` to return a native compiler on a
-        non-Windows host."""
-        if sys.platform == "win32":
-            pytest.skip("native compiler on Windows produces valid PE")
-        cc = _native_cc()
-        if cc is None:
-            pytest.skip("no native compiler to misuse")
-
         import download
 
-        monkeypatch.setattr(
-            download,
-            "_find_git_shim_compiler",
-            lambda: (cc, ()),
+        lean_dir = tmp_path / "lean"
+        leanc = lean_dir / "bin" / "leanc.exe"
+        leanc.parent.mkdir(parents=True)
+        leanc.touch()
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            output = Path(cmd[cmd.index("-o") + 1])
+            image = bytearray(0x84)
+            image[:2] = b"MZ"
+            image[0x3C:0x40] = (0x80).to_bytes(4, "little")
+            image[0x80:0x84] = b"PE\x00\x00"
+            output.write_bytes(image)
+            return Result()
+
+        monkeypatch.setattr(download.subprocess, "run", fake_run)
+
+        output = download.build_git_shim(
+            tmp_path, "windows", lean_dir=lean_dir,
         )
-        with pytest.raises(RuntimeError, match="not a PE image"):
-            download.build_git_shim(tmp_path, "windows")
+
+        assert output == tmp_path / "git-shim" / "git.exe"
+        assert calls == [
+            ([
+                str(leanc), "-O2", "-Wall", "-Wextra", "-s",
+                "-o", str(output), str(SHIM_SOURCE),
+            ], {"capture_output": True, "text": True})
+        ]

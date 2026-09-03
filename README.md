@@ -1,4 +1,4 @@
-# Lean 4 Bundle Builder
+# Lean 4 Bundle Builder (Waterproof support)
 
 Create self-contained, offline Lean 4 bundles for teaching.
 
@@ -44,7 +44,7 @@ Install the tool with [uv](https://docs.astral.sh/uv/):
 uv tool install git+https://github.com/leanprover-community/bundle
 ```
 
-That puts a `lean-bundle` CLI on your `PATH`.  Build a bundle for your
+That puts a `lean-bundle` CLI on your `PATH`. Build a bundle for your
 current platform (auto-detected):
 
 ```bash
@@ -52,10 +52,13 @@ lean-bundle https://github.com/PatrickMassot/MDD154
 ```
 
 The resulting `MDD154-bundle-<platform>.zip` lands in your current
-directory.  Send it to students; they unzip it and double-click
+directory. Send it to students; they unzip it and double-click
 `Start_Lean`.
 
 ## Usage
+
+Bundles must be built natively: run a Windows build on Windows, a macOS build
+on macOS, and a Linux build on the matching Linux architecture.
 
 ```bash
 lean-bundle https://github.com/PatrickMassot/MDD154 --platform windows
@@ -70,37 +73,126 @@ This produces `MDD154-bundle-windows.zip` containing:
 - The **project source files**
 - **Only the oleans transitively needed** by the project (not all of Mathlib)
 
+### Waterproof (Lean genre) projects
+
+Projects built on [Waterproof](https://github.com/impermeable/waterproof-vscode)'s
+Lean genre (`impermeable/waterproof-genre`, built on Verso) are just Lean 4
+projects from this tool's point of view.
+
+`lake build` resolves the genre
+library like any other dependency, and Lean's dependency parser traces its
+import closure the same as for Mathlib. The only extra step is bundling the
+Waterproof extension itself:
+
+```bash
+lean-bundle https://github.com/your-org/your-waterproof-course --platform windows --waterproof
+```
+
+If a course deliberately contains Lean files that cannot compile, use
+`--allow-unsolved`. The normal build is still attempted so dependencies used
+by the exercises are materialized, but its expected failure is tolerated:
+
+```bash
+lean-bundle https://github.com/your-org/incomplete-waterproof-course \
+    --waterproof \
+    --allow-unsolved
+```
+
+Waterproof bundles follow the operating system's light or dark appearance.
+Waterproof Light remains the fallback when no system preference is available.
+
+The Waterproof extension is fetched from Open VSX
+(`waterproof-tue.waterproof`). To bundle an unpublished build instead:
+
+```bash
+git clone https://github.com/impermeable/waterproof-vscode
+cd waterproof-vscode && git lfs pull && npm ci
+npm run package   # -> test_out/extension.vsix
+
+lean-bundle https://github.com/your-org/your-waterproof-course \
+    --platform windows \
+    --waterproof-vsix waterproof-vscode/test_out/extension.vsix
+```
+
+### Proof-sheet bundle commands
+
+Run these from the directory containing `bundle.py`. For bundles distributed
+to students, use the pinned commands. For this example, we fix the proof sheets at commit
+`e62b9166113d3f48b82a09bd5e728fbd779608cc`, VSCodium at `1.126.04524`, and
+Waterproof at `0.12.0`.
+
+**Pinned Windows:**
+
+```powershell
+python3 bundle.py https://github.com/impermeable/introduction-to-proof-sheets-lean --ref e62b9166113d3f48b82a09bd5e728fbd779608cc --platform windows --vscodium-version 1.126.04524 --waterproof-version 0.12.0 --allow-unsolved --work-dir "..\tmp\bewijzen-waterproof-windows" --clean-work-dir --output "..\bewijzen-waterproof-windows.zip"
+```
+
+**Pinned Linux x86-64:**
+
+```bash
+python3 bundle.py https://github.com/impermeable/introduction-to-proof-sheets-lean --ref e62b9166113d3f48b82a09bd5e728fbd779608cc --platform linux-x64 --vscodium-version 1.126.04524 --waterproof-version 0.12.0 --allow-unsolved --work-dir ../tmp/bewijzen-waterproof-linux-x64 --clean-work-dir --output ../bewijzen-waterproof-linux-x64.zip --open-file "Bewijzen/Lecture1/sheet1/_conjunction.lean"
+```
+
+The latest commands intentionally omit all three pins: they use the repository's
+default branch and the latest VSCodium and Waterproof releases available when
+the build starts.
+
+**Latest Windows:**
+
+```powershell
+python3 bundle.py https://github.com/impermeable/introduction-to-proof-sheets-lean --platform windows --waterproof --allow-unsolved --work-dir "..\tmp\bewijzen-waterproof-windows-latest" --clean-work-dir --output "..\bewijzen-waterproof-windows-latest.zip"
+```
+
+**Latest Linux x86-64:**
+
+```bash
+python3 bundle.py https://github.com/impermeable/introduction-to-proof-sheets-lean --platform linux-x64 --waterproof --allow-unsolved --work-dir ../tmp/bewijzen-waterproof-linux-x64-latest --clean-work-dir --output ../bewijzen-waterproof-linux-x64-latest.zip --open-file "Bewijzen/Lecture1/sheet1/_conjunction.lean"
+```
+
+For ARM64 Linux, replace `linux-x64` with `linux-arm64` and adjust the output
+names if desired. A work directory created by an older bundler has no ownership
+marker; remove that directory manually once or choose a new path.
+
 ### Requirements (build machine only)
 
 - Python 3.11+
 - Git
-- [elan](https://github.com/leanprover/elan) with the project's Lean toolchain
-- Lean 4.17+ (for `lean --src-deps`)
+- A project pinned to Lean 4.17+ (`--deps-json` accelerates Lean 4.22+)
 - Network access (to download components and mathlib cache)
-- A C compiler able to produce 64-bit Windows PE binaries **when
-  building Windows bundles** (mingw-w64 is recommended;
-  `apt-get install gcc-mingw-w64-x86-64` on Debian/Ubuntu). Zig or native
-  `gcc`/`clang` on a Windows build host also work.
+- The build host must match `--platform`; cross-platform builds are rejected.
+- On Windows, the downloaded Lean toolchain's `leanc.exe` builds the small
+  bundled `git.exe` shim; no additional C compiler is required.
 
 Students need none of these.
 
 ### Options
 
-```
+````
 --platform {windows,linux-x64,linux-arm64,darwin-x64,darwin-arm64}
-    Target platform (default: auto-detect)
+    Native platform; must match the build host (default: auto-detect)
 
 --output PATH
     Output zip file path
 
 --project-dir PATH
-    Use an already-cloned and built project instead of cloning fresh
+    Use an already-cloned project instead of cloning fresh
 
 --work-dir PATH
-    Working directory for downloads (default: temp dir)
+    Working directory for downloads and builds (default: a fresh temporary
+    directory). Directories created by the bundler receive an ownership marker.
+
+--clean-work-dir
+    Remove the entire --work-dir before building instead of cleaning generated
+    components individually. An existing directory must contain the valid
+    ownership marker from a previous run. Unmarked directories and paths
+    overlapping --project-dir or --waterproof-vsix are rejected.
+
+--allow-unsolved
+    Continue if the normal Lake build fails because exercises contain unsolved
+    goals. Repository CI is responsible for catching other build failures.
 
 --ref REF
-    Git ref (branch or tag) to checkout
+    Git commit, branch, or tag to checkout
 
 --vscodium-version VERSION
     Pin VSCodium version (default: latest)
@@ -108,20 +200,57 @@ Students need none of these.
 --extension-version VERSION
     Pin lean4 extension version (default: latest)
 
+--waterproof
+    Bundle the Waterproof VS Code extension instead of the Lean 4 extension,
+    for projects using the Waterproof Lean genre
+    (impermeable/waterproof-genre, built on Verso).
+    Only Waterproof's Lean path is wired up — it spawns `lake serve`
+    itself via its own `waterproof.lakePath`/`waterproof.lakeArgs`
+    settings, so no separate LSP setup is needed. The bundle pins
+    `waterproof.skipLaunchChecks: "lean4"` in the project's workspace
+    settings so Waterproof only starts the Lean language server. Rocq/
+    coq-lsp is out of scope for this bundler: nothing opam-related is
+    downloaded, built, or configured, and Rocq/`.v` support in the
+    bundled Waterproof extension will not work.
+
+    Fetched from Open VSX. To bundle an unpublished build, pass it via
+    --waterproof-vsix.
+
+--waterproof-version VERSION
+    Pin the Waterproof extension version fetched from Open VSX (implies
+    --waterproof; default: latest). Mutually exclusive with --waterproof-vsix.
+
+--waterproof-vsix PATH
+    Use an unpublished or locally-built Waterproof .vsix instead of downloading one
+    (implies --waterproof). Waterproof's own release process (see
+    CONTRIBUTING.md in impermeable/waterproof-vscode) is `npm run package`
+    producing `test_out/extension.vsix`, uploaded directly to the VS Code
+    Marketplace — there's no `.vsix` attached to GitHub releases. Build it
+    with:
+    ```
+    git clone https://github.com/impermeable/waterproof-vscode
+    cd waterproof-vscode && git lfs pull && npm ci
+    npm run package   # -> test_out/extension.vsix
+    ```
+    then pass that path here.
+
 --include [PATTERN ...]
     Additional file patterns to copy from the project (e.g. '*.json' 'data/')
 
 --open-file NAME
-    .lean file to auto-open on launch (default: first .lean file in
-    project root, alphabetically, excluding lakefile.lean)
+    .lean file to auto-open on the first launch of an extracted bundle
+    (default: no file; the workspace opens without an editor tab). Later
+    launches restore the student's editor state. Not supported when combining
+    --waterproof with --platform windows; see Known issues below.
 
 --no-zip
     Assemble the bundle directory without creating a zip
-```
+````
 
-### Example: pre-built project
+### Example: local project checkout
 
-If you've already cloned and built the project:
+If you've already cloned the project, you can use that checkout directly. The
+bundler still fetches its dependencies and builds it:
 
 ```bash
 python bundle.py https://github.com/PatrickMassot/MDD154 \
@@ -135,7 +264,7 @@ python bundle.py https://github.com/PatrickMassot/MDD154 \
 MDD154-bundle/
   Start_Lean.command/.cmd/.sh  # Double-click to launch (one per platform)
   lean/                       # Trimmed Lean toolchain
-  vscodium/                   # Portable VSCodium + lean4 extension
+  vscodium/                   # Portable VSCodium + selected editor extension
   project/                    # Course project
     lakefile.toml
     lean-toolchain
@@ -148,10 +277,12 @@ MDD154-bundle/
 ## How it works
 
 1. Clones the target project and builds it (fetching mathlib cache)
-2. Downloads VSCodium portable and the lean4 extension
-3. Uses `lean --src-deps` to compute the transitive import closure
+2. Downloads VSCodium portable and either the lean4 extension or, with
+   `--waterproof`, the Waterproof extension
+3. Uses batched `lean --deps-json` to compute the transitive import closure,
+   with parallel `lean --src-deps` as a compatibility fallback
 4. Copies only the needed modules' build artifacts (`.olean`, `.ilean`, etc.) into the bundle, skipping the thousands of Mathlib modules that aren't transitively imported
-5. Trims the Lean toolchain (removes clang, LLVM, ~500 MB saved)
+5. Trims the native Lean toolchain (removes clang and LLVM).
 6. Creates a launcher script that sets `PATH`, `LEAN_PATH`, and
    `VSCODE_PORTABLE` (no `ELAN_HOME` — that would confuse the lean4
    extension's elan probing), and registers the bundled Lean in
@@ -162,13 +293,13 @@ MDD154-bundle/
 
 ## Testing
 
-Run all tests locally against an existing bundle:
+Run the local Linux x86-64 test harness against an existing bundle:
 
 ```bash
 ./test.sh /path/to/MDD154-bundle
 ```
 
-This runs unit tests, bundle structure verification, launcher tests, and
+This runs the core unit tests, bundle structure verification, launcher tests, and
 Playwright GUI tests (requires Xvfb). Build a bundle first with:
 
 ```bash
@@ -177,6 +308,15 @@ python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --
 ```
 
 ## Known issues
+
+- **Opening a default Waterproof file on Windows.** Combining `--open-file`,
+  `--waterproof`, and `--platform windows` is rejected. On a cold start, VS Code
+  currently opens a file argument in its text editor instead of honoring
+  `workbench.editorAssociations`; opening the file after startup uses the
+  configured custom editor correctly. See
+  [VS Code issue #325506](https://github.com/microsoft/vscode/issues/325506).
+  Windows Waterproof bundles therefore open only the project workspace on first
+  launch. Windows bundles using the regular Lean 4 extension are unaffected.
 
 - **Git shim on Windows.** The lean4 VS Code extension and VS Code's
   built-in git extension both probe for `git` on PATH at startup. Rather
@@ -189,7 +329,7 @@ python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --
   exits. Source: `shim/git_shim.c`. This can be retired entirely once
   the lean4 extension provides a way to suppress its git check
   ([Zulip discussion](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/trylean.20bundle.20for.20lean4/near/581773347))
-  *and* VS Code's built-in git extension is disabled via settings.json
+  _and_ VS Code's built-in git extension is disabled via settings.json
   — whichever probe comes last determines whether the shim stays.
 
 - **Dep rewriting for offline use.** We rewrite `lake-manifest.json` and
@@ -214,15 +354,17 @@ python bundle.py https://github.com/PatrickMassot/MDD154 --platform linux-x64 --
 
 Several component versions are hardcoded and need periodic bumps:
 
-| Component | Where | Notes |
-|-----------|-------|-------|
-| git shim version string | `shim/git_shim.c` (`VERSION_LINE`) | Must be >= 2.0.0, not 2.25.x/2.26.x |
-| even-better-toml extension | `download.py` `ALLOWED_EXTENSION_DEPS` | ID + version |
-| elan installer | `.github/workflows/build-and-test.yml` | Tag in curl URL |
-| GitHub Actions (checkout, setup-python, etc.) | `.github/workflows/build-and-test.yml` | Pinned by commit SHA |
+| Component                                     | Where                                  | Notes                               |
+| --------------------------------------------- | -------------------------------------- | ----------------------------------- |
+| git shim version string                       | `shim/git_shim.c` (`VERSION_LINE`)     | Must be >= 2.0.0, not 2.25.x/2.26.x |
+| even-better-toml extension                    | `download.py` `LEAN4_EXTENSION_DEPS`   | ID + version                        |
+| elan installer                                | `.github/workflows/build-and-test.yml` | Tag in curl URL                     |
+| GitHub Actions (checkout, setup-python, etc.) | `.github/workflows/build-and-test.yml` | Pinned by commit SHA                |
 
 The **Lean toolchain** version comes from the target project's
-`lean-toolchain` file and is not pinned here. **VSCodium** and the **lean4
+`lean-toolchain` file and is not pinned here. **Waterproof** defaults to
+latest and can be pinned via `--waterproof-version`, same as VSCodium and
+the lean4 extension. **VSCodium** and the **lean4
 extension** default to the latest release but can be pinned per-build via
 `--vscodium-version` and `--extension-version`.
 

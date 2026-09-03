@@ -43,10 +43,13 @@ for /d %%P in ("%BUNDLE_ROOT%\project\.lake\packages\*") do (
     )
 )
 
-:: Determine which file to open (set during bundle assembly).
+:: Open the configured file only on the first launch of this extracted
+:: bundle. Later launches let VSCodium restore the student's own open tabs.
 set OPEN_FILE=@@OPEN_FILE@@
+set "OPEN_MARKER=%VSCODE_PORTABLE%\user-data\User\.lean-bundle-default-opened"
+if exist "!OPEN_MARKER!" set OPEN_FILE=
 
-:: Launch VSCodium with the project folder (and optional file).
+:: Launch VSCodium with the project folder (and optional first-launch file).
 :: Use `start` so the Command Prompt window closes immediately instead of
 :: staying open for the entire VSCodium session. The empty "" is required
 :: as the window-title argument (otherwise `start` treats the quoted path
@@ -54,6 +57,7 @@ set OPEN_FILE=@@OPEN_FILE@@
 if defined OPEN_FILE (
     if exist "%BUNDLE_ROOT%\project\!OPEN_FILE!" (
         start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" "%BUNDLE_ROOT%\project\!OPEN_FILE!" %*
+        type nul > "!OPEN_MARKER!"
     ) else (
         start "" "%BUNDLE_ROOT%\vscodium\VSCodium.exe" "%BUNDLE_ROOT%\project" %*
     )

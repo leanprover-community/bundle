@@ -7,11 +7,26 @@ from pathlib import Path
 import json
 import pytest
 
+import bundle
+
+from bundle import (
+    _WORK_DIR_MARKER,
+    _detect_host_platform,
+    _prepare_work_dir,
+    build_project,
+    clone_project,
+)
+from download import trim_lean_toolchain
+
 from assemble import (
     _BUNDLE_CRITICAL_SETTINGS,
+    _BUNDLE_USER_SETTINGS,
+    _WATERPROOF_CRITICAL_SETTINGS,
+    _WATERPROOF_USER_SETTINGS,
     _module_stem_from_build_path,
     _parse_jsonc,
     _patch_workspace_settings,
+    _reset_bundle_dir,
     _rewrite_lakefile_lean_deps,
     _rewrite_lakefile_toml_deps,
     copy_lake_selective,
@@ -30,6 +45,374 @@ def test_no_zip_without_work_dir_is_rejected() -> None:
     )
     assert result.returncode == 2
     assert "--no-zip requires --work-dir" in result.stderr
+
+
+def test_clean_work_dir_without_work_dir_is_rejected() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "bundle.py",
+            "https://example.invalid/repo",
+            "--clean-work-dir",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "--clean-work-dir requires --work-dir" in result.stderr
+
+
+def test_cross_platform_bundle_is_rejected_before_work_starts() -> None:
+    target = "linux-x64" if sys.platform == "win32" else "windows"
+    result = subprocess.run(
+        [
+            sys.executable, "bundle.py", "https://example.invalid/repo",
+            "--platform", target,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "Cross-platform bundles are not supported" in result.stderr
+    assert f"requested {target}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "waterproof_args",
+    [
+        ["--waterproof"],
+        ["--waterproof-version", "0.12.0"],
+        ["--waterproof-vsix", "waterproof.vsix"],
+    ],
+)
+def test_open_file_is_rejected_for_windows_waterproof_before_work_starts(
+    waterproof_args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(bundle, "_detect_host_platform", lambda: "windows")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bundle.py",
+            "https://example.invalid/repo",
+            "--platform",
+            "windows",
+            *waterproof_args,
+            "--open-file",
+            "Course/Sheet.lean",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        bundle.main()
+
+    assert exc_info.value.code == 2
+    assert (
+        "--open-file is not supported for Waterproof bundles on Windows"
+        in capsys.readouterr().err
+    )
+
+
+def test_open_file_remains_supported_for_regular_windows_bundles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CloneReached(Exception):
+        pass
+
+    def fake_clone(*args, **kwargs):
+        raise CloneReached
+
+    monkeypatch.setattr(bundle, "_detect_host_platform", lambda: "windows")
+    monkeypatch.setattr(bundle, "clone_project", fake_clone)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bundle.py",
+            "https://example.invalid/repo",
+            "--platform",
+            "windows",
+            "--open-file",
+            "Course/Sheet.lean",
+            "--work-dir",
+            str(tmp_path / "work"),
+        ],
+    )
+
+    with pytest.raises(CloneReached):
+        bundle.main()
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "expected"),
+    [
+        ("Windows", "AMD64", "windows"),
+        ("Linux", "x86_64", "linux-x64"),
+        ("Linux", "aarch64", "linux-arm64"),
+        ("Darwin", "x86_64", "darwin-x64"),
+        ("Darwin", "arm64", "darwin-arm64"),
+    ],
+)
+def test_detect_host_platform_accepts_supported_architectures(
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
+    machine: str,
+    expected: str,
+) -> None:
+    monkeypatch.setattr("bundle.platform.system", lambda: system)
+    monkeypatch.setattr("bundle.platform.machine", lambda: machine)
+
+    assert _detect_host_platform() == expected
+
+
+@pytest.mark.parametrize("machine", ["i686", "ppc64le", "riscv64", "s390x"])
+def test_detect_host_platform_rejects_unsupported_linux_architectures(
+    monkeypatch: pytest.MonkeyPatch,
+    machine: str,
+) -> None:
+    monkeypatch.setattr("bundle.platform.system", lambda: "Linux")
+    monkeypatch.setattr("bundle.platform.machine", lambda: machine)
+
+    with pytest.raises(RuntimeError, match=f"linux/{machine}"):
+        _detect_host_platform()
+
+
+def test_clone_project_removes_previous_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "project"
+    stale_file = destination / "stale.txt"
+    stale_file.parent.mkdir()
+    stale_file.write_text("left by an interrupted run")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == [
+            "git",
+            "clone",
+            "--depth=1",
+            "https://example.invalid/repo",
+            str(destination),
+        ]
+        assert not destination.exists()
+
+    monkeypatch.setattr("bundle.subprocess.run", fake_run)
+
+    assert clone_project("https://example.invalid/repo", destination) == destination
+
+
+def test_clone_project_checks_out_a_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "project"
+    commit = "e62b9166113d3f48b82a09bd5e728fbd779608cc"
+    calls = []
+    monkeypatch.setattr(
+        "bundle.subprocess.run",
+        lambda cmd, **kwargs: calls.append(cmd),
+    )
+
+    clone_project("https://example.invalid/repo", destination, ref=commit)
+
+    assert calls == [
+        [
+            "git", "clone", "--depth=1", "--no-checkout",
+            "https://example.invalid/repo", str(destination),
+        ],
+        ["git", "-C", str(destination), "fetch", "--depth=1", "origin", commit],
+        ["git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
+    ]
+
+
+def test_prepare_work_dir_preserves_existing_contents_by_default(
+    tmp_path: Path,
+) -> None:
+    work_dir = tmp_path / "existing-work"
+    sentinel = work_dir / "keep.txt"
+    sentinel.parent.mkdir()
+    sentinel.write_text("keep")
+
+    prepared = _prepare_work_dir(work_dir)
+
+    assert prepared == work_dir.resolve()
+    assert sentinel.read_text() == "keep"
+    assert not (prepared / _WORK_DIR_MARKER).exists()
+
+
+def test_clean_work_dir_removes_all_previous_contents(tmp_path: Path) -> None:
+    work_dir = _prepare_work_dir(tmp_path / "dedicated-work")
+    marker = work_dir / _WORK_DIR_MARKER
+    assert marker.is_file()
+
+    stale_vscodium = work_dir / "downloads" / "vscodium" / "obsolete.exe"
+    stale_extension = (
+        work_dir / "downloads" / "waterproof-tue.waterproof-0.12.0"
+        / "obsolete.js"
+    )
+    stale_vscodium.parent.mkdir(parents=True)
+    stale_extension.parent.mkdir(parents=True)
+    stale_vscodium.write_bytes(b"old")
+    stale_extension.write_bytes(b"old")
+
+    prepared = _prepare_work_dir(work_dir, clean=True)
+
+    assert prepared == work_dir.resolve()
+    assert marker.is_file()
+    assert [path.name for path in prepared.iterdir()] == [_WORK_DIR_MARKER]
+
+
+def test_clean_work_dir_rejects_missing_marker(tmp_path: Path) -> None:
+    work_dir = tmp_path / "unowned"
+    sentinel = work_dir / "keep.txt"
+    sentinel.parent.mkdir()
+    sentinel.write_text("caller-owned")
+
+    with pytest.raises(ValueError, match="unowned work directory"):
+        _prepare_work_dir(work_dir, clean=True)
+
+    assert sentinel.read_text() == "caller-owned"
+
+
+def test_clean_work_dir_rejects_an_input_inside_it(tmp_path: Path) -> None:
+    work_dir = _prepare_work_dir(tmp_path / "work")
+    project_dir = work_dir / "project"
+    sentinel = project_dir / "keep.txt"
+    sentinel.parent.mkdir()
+    sentinel.write_text("caller-owned")
+
+    with pytest.raises(ValueError, match="overlaps an input path"):
+        _prepare_work_dir(
+            work_dir,
+            clean=True,
+            protected_paths=(project_dir,),
+        )
+
+    assert sentinel.read_text() == "caller-owned"
+
+
+def test_clean_work_dir_rejects_current_directory() -> None:
+    with pytest.raises(ValueError, match="unsafe work directory"):
+        _prepare_work_dir(Path.cwd(), clean=True)
+
+
+def test_allow_unsolved_tolerates_failed_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    lake = str(Path("/toolchain/bin/lake"))
+
+    class Result:
+        def __init__(self, returncode: int):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command == [lake, "build"]:
+            return Result(1)
+        return Result(0)
+
+    monkeypatch.setattr("bundle.subprocess.run", fake_run)
+
+    build_project(
+        tmp_path,
+        Path(lake),
+        "linux-x64",
+        allow_unsolved=True,
+    )
+
+    assert calls == [
+        [lake, "exe", "cache", "get"],
+        [lake, "build"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("retry_returncode", "warns"),
+    [(0, False), (1, True)],
+)
+def test_allow_unsolved_retries_windows_build_serially_before_continuing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    retry_returncode: int,
+    warns: bool,
+) -> None:
+    calls: list[list[str]] = []
+    calls_with_env: list[dict[str, str]] = []
+    build_attempt = 0
+    lake = str(Path("/toolchain/bin/lake"))
+
+    class Result:
+        def __init__(self, returncode: int):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(command, **kwargs):
+        nonlocal build_attempt
+        calls.append(command)
+        calls_with_env.append(kwargs.get("env", {}))
+        if command == [lake, "build"]:
+            build_attempt += 1
+            return Result(1 if build_attempt == 1 else retry_returncode)
+        return Result(0)
+
+    monkeypatch.setenv("LEAN_NUM_THREADS", "8")
+    monkeypatch.setattr("bundle.subprocess.run", fake_run)
+
+    build_project(
+        tmp_path,
+        Path(lake),
+        "windows",
+        allow_unsolved=True,
+    )
+
+    assert calls == [
+        [lake, "exe", "cache", "get"],
+        [lake, "build"],
+        [lake, "build"],
+    ]
+    assert calls_with_env[0]["LEAN_NUM_THREADS"] == "8"
+    assert calls_with_env[1]["LEAN_NUM_THREADS"] == "8"
+    assert calls_with_env[2]["LEAN_NUM_THREADS"] == "1"
+    output = capsys.readouterr().out
+    assert "retrying serially on Windows" in output
+    assert ("--allow-unsolved was specified" in output) is warns
+
+
+class TestTrimLeanToolchain:
+    @staticmethod
+    def _make_toolchain(root: Path) -> None:
+        for rel in [
+            "bin/lean.exe",
+            "bin/lake.exe",
+            "bin/clang.exe",
+            "bin/llvm-ar.exe",
+            "bin/ld.lld.exe",
+            "include/lean/lean.h",
+            "lib/clang/include/stddef.h",
+            "lib/lean/libleanrt.a",
+        ]:
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"tool")
+
+    def test_removes_build_tools(self, tmp_path: Path):
+        self._make_toolchain(tmp_path)
+
+        trim_lean_toolchain(tmp_path, "windows")
+
+        assert (tmp_path / "bin" / "lean.exe").is_file()
+        assert (tmp_path / "bin" / "lake.exe").is_file()
+        assert not (tmp_path / "bin" / "clang.exe").exists()
+        assert not (tmp_path / "bin" / "llvm-ar.exe").exists()
+        assert not (tmp_path / "include").exists()
+        assert not (tmp_path / "lib" / "clang").exists()
+        assert not (tmp_path / "lib" / "lean" / "libleanrt.a").exists()
 
 
 class TestModuleStemFromBuildPath:
@@ -130,6 +513,42 @@ class TestCopyLakeSelective:
         # The Mathlib build directory tree should not exist
         mathlib_build = dst / "packages" / "mathlib" / ".lake" / "build" / "lib" / "lean" / "Mathlib"
         assert not mathlib_build.exists()
+
+
+class TestResetBundleDir:
+    def test_removes_stale_files_and_symlinks(self, tmp_path: Path):
+        bundle = tmp_path / "course-bundle"
+        stale = bundle / "project" / ".lake" / "packages" / "mathlib"
+        stale.mkdir(parents=True)
+        (stale / "artifact.olean").write_bytes(b"stale")
+        try:
+            (stale / "run.py").symlink_to("run")
+        except OSError as exc:
+            if sys.platform == "win32" and exc.winerror == 1314:
+                pytest.skip("Windows user cannot create symbolic links")
+            raise
+
+        _reset_bundle_dir(bundle)
+
+        assert bundle.is_dir()
+        assert list(bundle.iterdir()) == []
+
+    def test_refuses_to_replace_a_symlink(self, tmp_path: Path):
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        bundle = tmp_path / "course-bundle"
+        try:
+            bundle.symlink_to(real_dir, target_is_directory=True)
+        except OSError as exc:
+            if sys.platform == "win32" and exc.winerror == 1314:
+                pytest.skip("Windows user cannot create symbolic links")
+            raise
+
+        with pytest.raises(ValueError, match="not a directory"):
+            _reset_bundle_dir(bundle)
+
+        assert real_dir.is_dir()
+
 
 
 def test_prune_ir_from_bundle_removes_lean_ir_payloads(tmp_path: Path) -> None:
@@ -271,11 +690,76 @@ def test_setup_vscodium_portable_uses_vsix_extension_subdir(tmp_path) -> None:
     settings_template = tmp_path / "settings.json"
     settings_template.write_text("{}")
 
-    setup_vscodium_portable(vscodium_dir, [extension_dir], settings_template)
+    setup_vscodium_portable(
+        vscodium_dir,
+        [extension_dir],
+        settings_template,
+        user_settings_overrides=_BUNDLE_USER_SETTINGS,
+    )
 
     ext_dest = vscodium_dir / "data" / "extensions" / extension_dir.name
     assert (ext_dest / "package.json").is_file()
     assert not (ext_dest / "extension" / "package.json").exists()
+    user_settings = json.loads(
+        (vscodium_dir / "data/user-data/User/settings.json").read_text()
+    )
+    assert user_settings["extensions.autoUpdate"] is False
+
+
+def test_setup_vscodium_portable_makes_waterproof_editor_default(tmp_path) -> None:
+    vscodium_dir = tmp_path / "vscodium"
+    vscodium_dir.mkdir()
+
+    extension_dir = tmp_path / "waterproof-tue.waterproof-local"
+    nested = extension_dir / "extension"
+    nested.mkdir(parents=True)
+    package = {
+        "publisher": "waterproof-tue",
+        "name": "waterproof",
+        "version": "0.12.0-dev",
+        "contributes": {
+            "customEditors": [{
+                "viewType": "waterproofTue.waterproofEditor",
+                "selector": [{"filenamePattern": "*.lean"}],
+            }],
+        },
+    }
+    (nested / "package.json").write_text(json.dumps(package))
+    settings_template = tmp_path / "settings.json"
+    settings_template.write_text("{}")
+
+    setup_vscodium_portable(
+        vscodium_dir,
+        [extension_dir],
+        settings_template,
+        user_settings_overrides={
+            **_BUNDLE_USER_SETTINGS,
+            **_WATERPROOF_USER_SETTINGS,
+        },
+    )
+
+    installed_package = json.loads((
+        vscodium_dir / "data/extensions" / extension_dir.name / "package.json"
+    ).read_text())
+    editor = installed_package["contributes"]["customEditors"][0]
+    assert editor["priority"] == "default"
+    assert "priority" not in json.loads((nested / "package.json").read_text())[
+        "contributes"
+    ]["customEditors"][0]
+    user_settings = json.loads((
+        vscodium_dir / "data/user-data/User/settings.json"
+    ).read_text())
+    assert "workbench.editorAssociations" not in user_settings
+    assert user_settings["window.autoDetectColorScheme"] is True
+    assert user_settings["workbench.colorTheme"] == "waterproof-light"
+    assert (
+        user_settings["workbench.preferredLightColorTheme"]
+        == "waterproof-light"
+    )
+    assert (
+        user_settings["workbench.preferredDarkColorTheme"]
+        == "waterproof-dark"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +814,49 @@ class TestPatchWorkspaceSettings:
         assert result["lean4.input.leader"] == "\\"
         assert result["lean4.automaticallyBuildDependencies"] is False
 
+    def test_waterproof_association_preserves_other_editor_associations(
+        self, tmp_path: Path
+    ) -> None:
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        (vscode_dir / "settings.json").write_text(json.dumps({
+            "workbench.editorAssociations": {
+                "*.md": "vscode.markdown.preview.editor",
+                "*.lean": "project.otherEditor",
+            },
+        }))
+
+        _patch_workspace_settings(tmp_path, _WATERPROOF_CRITICAL_SETTINGS)
+
+        result = json.loads((vscode_dir / "settings.json").read_text())
+        associations = result["workbench.editorAssociations"]
+        assert associations == {
+            "*.md": "vscode.markdown.preview.editor",
+            "*.lean": "waterproofTue.waterproofEditor",
+        }
+
+    def test_waterproof_theme_settings_are_removed_from_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        project_settings = {
+            **_WATERPROOF_USER_SETTINGS,
+            "editor.fontSize": 14,
+        }
+        (vscode_dir / "settings.json").write_text(json.dumps(project_settings))
+
+        _patch_workspace_settings(
+            tmp_path,
+            _WATERPROOF_CRITICAL_SETTINGS,
+            remove_settings=tuple(_WATERPROOF_USER_SETTINGS),
+        )
+
+        result = json.loads((vscode_dir / "settings.json").read_text())
+        for key in _WATERPROOF_USER_SETTINGS:
+            assert key not in result
+        assert result["editor.fontSize"] == 14
+
     def test_creates_vscode_dir_when_missing(self, tmp_path: Path) -> None:
         """.vscode/ directory is created if it doesn't exist."""
         assert not (tmp_path / ".vscode").exists()
@@ -361,6 +888,22 @@ class TestPatchWorkspaceSettings:
         assert "lean4.alwaysAskBeforeInstallingLeanVersions" in _BUNDLE_CRITICAL_SETTINGS
         assert "lean4.showSetupWarnings" in _BUNDLE_CRITICAL_SETTINGS
         assert "security.workspace.trust.enabled" in _BUNDLE_CRITICAL_SETTINGS
+        assert (
+            _BUNDLE_CRITICAL_SETTINGS[
+                "workbench.secondarySideBar.defaultVisibility"
+            ]
+            == "hidden"
+        )
+        assert _WATERPROOF_CRITICAL_SETTINGS["waterproof.skipLaunchChecks"] == "lean4"
+        assert _WATERPROOF_CRITICAL_SETTINGS["workbench.editorAssociations"] == {
+            "*.lean": "waterproofTue.waterproofEditor",
+        }
+        assert _WATERPROOF_USER_SETTINGS == {
+            "window.autoDetectColorScheme": True,
+            "workbench.colorTheme": "waterproof-light",
+            "workbench.preferredLightColorTheme": "waterproof-light",
+            "workbench.preferredDarkColorTheme": "waterproof-dark",
+        }
 
 
 class TestParseJsonc:
@@ -391,34 +934,47 @@ class TestRewriteLakefileLeanDeps:
 
     def test_bare_require(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
-        lakefile.write_text('require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n')
+        lakefile.write_text(
+            'require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n',
+            encoding="utf-8",
+        )
         _rewrite_lakefile_lean_deps(tmp_path)
-        assert lakefile.read_text() == 'require mathlib from ".lake/packages/mathlib"\n'
+        assert lakefile.read_text(encoding="utf-8") == 'require mathlib from ".lake/packages/mathlib"\n'
 
     def test_quoted_require(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
-        lakefile.write_text('require "mathlib" from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n')
+        lakefile.write_text(
+            'require "mathlib" from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n',
+            encoding="utf-8",
+        )
         _rewrite_lakefile_lean_deps(tmp_path)
-        assert lakefile.read_text() == 'require "mathlib" from ".lake/packages/mathlib"\n'
+        assert lakefile.read_text(encoding="utf-8") == 'require "mathlib" from ".lake/packages/mathlib"\n'
 
     def test_guillemet_require(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
-        lakefile.write_text('require «doc-gen4» from git "https://github.com/leanprover/doc-gen4" @ "main"\n')
+        lakefile.write_text(
+            'require «doc-gen4» from git "https://github.com/leanprover/doc-gen4" @ "main"\n',
+            encoding="utf-8",
+        )
         _rewrite_lakefile_lean_deps(tmp_path)
-        assert lakefile.read_text() == 'require «doc-gen4» from ".lake/packages/doc-gen4"\n'
+        assert lakefile.read_text(encoding="utf-8") == 'require «doc-gen4» from ".lake/packages/doc-gen4"\n'
 
     def test_no_rev(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
-        lakefile.write_text('require mathlib from git "https://github.com/leanprover-community/mathlib4"\n')
+        lakefile.write_text(
+            'require mathlib from git "https://github.com/leanprover-community/mathlib4"\n',
+            encoding="utf-8",
+        )
         _rewrite_lakefile_lean_deps(tmp_path)
-        assert lakefile.read_text() == 'require mathlib from ".lake/packages/mathlib"\n'
+        assert lakefile.read_text(encoding="utf-8") == 'require mathlib from ".lake/packages/mathlib"\n'
 
     def test_multiple_deps(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
         lakefile.write_text(
             'require "mathlib" from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n'
             'require «doc-gen4» from git "https://github.com/leanprover/doc-gen4" @ "main"\n'
-            'require aesop from git "https://github.com/leanprover-community/aesop"\n'
+            'require aesop from git "https://github.com/leanprover-community/aesop"\n',
+            encoding="utf-8",
         )
         _rewrite_lakefile_lean_deps(tmp_path)
         expected = (
@@ -426,14 +982,14 @@ class TestRewriteLakefileLeanDeps:
             'require «doc-gen4» from ".lake/packages/doc-gen4"\n'
             'require aesop from ".lake/packages/aesop"\n'
         )
-        assert lakefile.read_text() == expected
+        assert lakefile.read_text(encoding="utf-8") == expected
 
     def test_commented_out_require_not_rewritten(self, tmp_path: Path) -> None:
         lakefile = tmp_path / "lakefile.lean"
         original = '-- require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v1.0"\n'
-        lakefile.write_text(original)
+        lakefile.write_text(original, encoding="utf-8")
         _rewrite_lakefile_lean_deps(tmp_path)
-        assert lakefile.read_text() == original
+        assert lakefile.read_text(encoding="utf-8") == original
 
     def test_no_lakefile(self, tmp_path: Path) -> None:
         """No crash when lakefile.lean doesn't exist."""

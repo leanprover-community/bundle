@@ -35,11 +35,47 @@
  *
  * Build:
  *   x86_64-w64-mingw32-gcc -O2 -s -o git.exe git_shim.c   (cross on Linux)
- *   gcc -O2 -s -o git.exe git_shim.c                      (native on Windows)
+ *   leanc -O2 -s -o git.exe git_shim.c                     (bundled on Windows)
  */
 
+#ifdef _WIN32
+/* Keep the Windows build independent of SDK/MinGW headers.  Lean's Windows
+ * toolchain includes leanc, the CRT objects, and kernel32 import library, but
+ * deliberately does not ship the ordinary C/Windows header trees. */
+typedef void *shim_handle;
+typedef unsigned long shim_dword;
+typedef int shim_bool;
+
+__declspec(dllimport) shim_handle __stdcall GetStdHandle(shim_dword handle);
+__declspec(dllimport) shim_bool __stdcall WriteFile(
+    shim_handle file,
+    const void *buffer,
+    shim_dword bytes_to_write,
+    shim_dword *bytes_written,
+    void *overlapped
+);
+
+#define SHIM_STD_OUTPUT_HANDLE ((shim_dword)-11)
+#define SHIM_STD_ERROR_HANDLE  ((shim_dword)-12)
+
+static void write_stream(shim_dword stream, const char *text) {
+    shim_dword length = 0;
+    shim_dword written;
+    while (text[length] != '\0') {
+        length++;
+    }
+    (void)WriteFile(GetStdHandle(stream), text, length, &written, 0);
+}
+#else
 #include <stdio.h>
-#include <string.h>
+
+#define SHIM_STD_OUTPUT_HANDLE 1
+#define SHIM_STD_ERROR_HANDLE  2
+
+static void write_stream(int stream, const char *text) {
+    fputs(text, stream == SHIM_STD_OUTPUT_HANDLE ? stdout : stderr);
+}
+#endif
 
 /* Must be >= 2.0.0 and must NOT be 2.25.x/2.26.x (VS Code pops a modal
  * deprecation warning for those on Windows). Choosing 2.47.0 matches the
@@ -53,9 +89,17 @@ static const char VERSION_LINE[] = "git version 2.47.0\n";
 static const char NOT_A_REPO[] =
     "fatal: not a git repository (or any of the parent directories): .git\n";
 
+static int strings_equal(const char *a, const char *b) {
+    while (*a != '\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
 static int is_version_flag(const char *a) {
-    return strcmp(a, "--version") == 0
-        || strcmp(a, "-v") == 0;
+    return strings_equal(a, "--version")
+        || strings_equal(a, "-v");
 }
 
 /* A few top-level flags consume the next argv entry (e.g. `git -C <dir>
@@ -63,15 +107,15 @@ static int is_version_flag(const char *a) {
  * caller like `git -c user.name=foo commit` doesn't confuse us into thinking
  * `user.name=foo` is the subcommand. */
 static int consumes_next(const char *a) {
-    return strcmp(a, "-C") == 0
-        || strcmp(a, "-c") == 0
-        || strcmp(a, "--git-dir") == 0
-        || strcmp(a, "--work-tree") == 0
-        || strcmp(a, "--namespace") == 0;
+    return strings_equal(a, "-C")
+        || strings_equal(a, "-c")
+        || strings_equal(a, "--git-dir")
+        || strings_equal(a, "--work-tree")
+        || strings_equal(a, "--namespace");
 }
 
 int main(int argc, char *argv[]) {
-    const char *sub = NULL;
+    const char *sub = 0;
     int i = 1;
 
     while (i < argc) {
@@ -81,7 +125,7 @@ int main(int argc, char *argv[]) {
             break;
         }
         if (is_version_flag(a)) {
-            fputs(VERSION_LINE, stdout);
+            write_stream(SHIM_STD_OUTPUT_HANDLE, VERSION_LINE);
             return 0;
         }
         if (consumes_next(a)) {
@@ -92,8 +136,8 @@ int main(int argc, char *argv[]) {
         i += 1;
     }
 
-    if (sub != NULL && strcmp(sub, "version") == 0) {
-        fputs(VERSION_LINE, stdout);
+    if (sub != 0 && strings_equal(sub, "version")) {
+        write_stream(SHIM_STD_OUTPUT_HANDLE, VERSION_LINE);
         return 0;
     }
 
@@ -102,6 +146,6 @@ int main(int argc, char *argv[]) {
      * abort cleanly, and Lake's optional git probes (`captureProc?`,
      * `testProc`) treat non-zero exit as "no result" without surfacing the
      * error. The exit code (128) matches real git's "not a repository". */
-    fputs(NOT_A_REPO, stderr);
+    write_stream(SHIM_STD_ERROR_HANDLE, NOT_A_REPO);
     return 128;
 }

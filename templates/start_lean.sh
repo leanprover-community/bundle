@@ -52,13 +52,16 @@ for pkg_dir in "$BUNDLE_ROOT"/project/.lake/packages/*/; do
 done
 export LEAN_PATH
 
-# Determine which file to open (set during bundle assembly).
+# Open the configured file only on the first launch of this extracted
+# bundle. Later launches let VSCodium restore the student's own open tabs.
 OPEN_FILE="@@OPEN_FILE@@"
+OPEN_MARKER="$VSCODE_PORTABLE/user-data/User/.lean-bundle-default-opened"
 
-# Build the argument list: workspace folder, then optional file.
+# Build the argument list: workspace folder, then optional first-launch file.
 ARGS=("$BUNDLE_ROOT/project")
-if [ -n "$OPEN_FILE" ] && [ -f "$BUNDLE_ROOT/project/$OPEN_FILE" ]; then
+if [ ! -e "$OPEN_MARKER" ] && [ -n "$OPEN_FILE" ] && [ -f "$BUNDLE_ROOT/project/$OPEN_FILE" ]; then
     ARGS+=("$BUNDLE_ROOT/project/$OPEN_FILE")
+    : > "$OPEN_MARKER"
 fi
 
 # Launch VSCodium

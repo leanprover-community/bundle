@@ -28,8 +28,9 @@ def _create_fake_bundle(root: Path) -> None:
          / ".lake" / "build" / "lib" / "lean").mkdir(parents=True)
     # One package WITHOUT a build dir (should NOT appear in LEAN_PATH)
     (root / "project" / ".lake" / "packages" / "batteries").mkdir(parents=True)
-    # Dummy VSCodium entries so the script doesn't complain
-    (root / "vscodium").mkdir(parents=True)
+    # Dummy VSCodium entries so the script doesn't complain. The portable
+    # user directory also stores the one-time default-file marker.
+    (root / "vscodium" / "data" / "user-data" / "User").mkdir(parents=True)
 
 
 def _parse_probe_output(path: Path) -> dict[str, str]:
@@ -55,15 +56,19 @@ env > "$BUNDLE_ROOT/_test_env.txt"
 (
     echo "[LAUNCH_ARG]"
     echo "$BUNDLE_ROOT/project"
+    echo "[OPEN_ARG]"
+    echo "${ARGS[1]-}"
 ) > "$BUNDLE_ROOT/_test_probe.txt"
 """
 
 
-def _patch_unix_launcher(template: Path, output: Path) -> None:
+def _patch_unix_launcher(
+    template: Path, output: Path, open_file: str = "",
+) -> None:
     """Replace the VSCodium launch block with an environment probe."""
     text = template.read_text()
     # Substitute @@-placeholders that assemble.py would normally fill in.
-    text = text.replace("@@OPEN_FILE@@", "")
+    text = text.replace("@@OPEN_FILE@@", open_file)
     text = text.replace("@@TOOLCHAIN_ENCODED@@", "")
     # Replace from "# Launch VSCodium\n" (exact line) through end of file.
     # This must NOT match "# Launch VSCodium with Lean 4..." on line 2.
@@ -92,6 +97,8 @@ class TestLauncherUnix:
             if k not in ("ELAN_HOME", "LEAN_PATH")
         }
         clean_env["HOME"] = str(tmp_path)
+        clean_env["VSCODE_IPC_HOOK_CLI"] = "/stale/remote-cli.sock"
+        clean_env.pop("DONT_PROMPT_WSL_INSTALL", None)
         subprocess.run(
             [bash, str(patched)],
             check=True,
@@ -161,6 +168,51 @@ class TestLauncherUnix:
         root = result["_bundle_root"]
         assert result["LAUNCH_ARG"] == f"{root}/project"
 
+    def test_default_file_is_only_opened_on_first_launch(
+        self, tmp_path: Path,
+    ) -> None:
+        _create_fake_bundle(tmp_path)
+        relative_file = "Course/Sheet.lean"
+        lean_file = tmp_path / "project" / relative_file
+        lean_file.parent.mkdir()
+        lean_file.write_text("import Init")
+        patched = tmp_path / "start_lean_test.sh"
+        _patch_unix_launcher(
+            TEMPLATES_DIR / "start_lean.sh", patched, relative_file,
+        )
+        clean_env = {
+            key: value for key, value in os.environ.items()
+            if key not in ("ELAN_HOME", "LEAN_PATH")
+        }
+        clean_env["HOME"] = str(tmp_path)
+        bash = shutil.which("bash")
+        assert bash
+
+        subprocess.run(
+            [bash, str(patched)],
+            check=True,
+            timeout=30,
+            cwd=tmp_path,
+            env=clean_env,
+        )
+        first = _parse_probe_output(tmp_path / "_test_probe.txt")
+        marker = (
+            tmp_path / "vscodium" / "data" / "user-data" / "User"
+            / ".lean-bundle-default-opened"
+        )
+        assert first["OPEN_ARG"] == str(lean_file)
+        assert marker.is_file()
+
+        subprocess.run(
+            [bash, str(patched)],
+            check=True,
+            timeout=30,
+            cwd=tmp_path,
+            env=clean_env,
+        )
+        second = _parse_probe_output(tmp_path / "_test_probe.txt")
+        assert second["OPEN_ARG"] == ""
+
 
 # ---------------------------------------------------------------------------
 # Windows launcher tests
@@ -171,7 +223,8 @@ WINDOWS_PROBE = """\
     echo [PATH]
     echo !PATH!
     echo [ELAN_HOME]
-    echo !ELAN_HOME!
+    if defined ELAN_HOME echo __SET__
+    if not defined ELAN_HOME echo __UNSET__
     echo [LEAN_PATH]
     echo !LEAN_PATH!
     echo [LAUNCH_ARG]
@@ -238,13 +291,9 @@ class TestLauncherWindows:
         # The launcher deliberately clears ELAN_HOME — if it stays set,
         # the lean4 VS Code extension tries to use elan as configured
         # there and gets stuck when there's no elan binary at that path.
-        # cmd.exe quirks: `echo !VAR!` may print the literal `!VAR!`, or
-        # `ECHO is on/off.` when VAR is empty.  All three indicate
-        # the variable is not meaningfully set.
-        val = result.get("ELAN_HOME", "")
-        assert val in ("", "!ELAN_HOME!") or val.startswith("ECHO is "), (
-            f"ELAN_HOME should be empty/unset, got: {val!r}"
-        )
+        # Use an explicit probe marker instead of parsing cmd.exe's localized
+        # output for `echo` with an empty variable.
+        assert result.get("ELAN_HOME") == "__UNSET__"
 
     def test_path_has_no_elan(self, result: dict[str, str]) -> None:
         for entry in result["PATH"].split(";"):

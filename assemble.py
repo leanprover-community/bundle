@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -18,6 +19,39 @@ _BUILD_MARKERS = (
     ("build", "lib", "lean"),
     ("build", "ir"),
 )
+
+
+def _windows_extended_path(path: Path) -> Path:
+    """Return an absolute ``\\\\?\\`` path on Windows.
+
+    Python's recursive filesystem helpers can otherwise fail around the
+    legacy MAX_PATH boundary, even when every individual path component is
+    valid.  Other platforms keep the original path unchanged.
+    """
+    if os.name != "nt":
+        return path
+
+    value = os.path.abspath(path)
+    if value.startswith("\\\\?\\"):
+        return Path(value)
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + value[2:])
+    return Path("\\\\?\\" + value)
+
+
+def _rmtree(path: Path) -> None:
+    """Remove a tree on Windows even when Git left read-only pack files."""
+    fs_path = _windows_extended_path(path)
+
+    def remove_readonly(function, failed_path, exc_info):
+        error = exc_info[1]
+        if isinstance(error, PermissionError):
+            os.chmod(failed_path, stat.S_IWRITE)
+            function(failed_path)
+            return
+        raise error
+
+    shutil.rmtree(fs_path, onerror=remove_readonly)
 
 
 def _module_stem_from_build_path(rel_parts: tuple[str, ...]) -> str | None:
@@ -39,9 +73,7 @@ def _module_stem_from_build_path(rel_parts: tuple[str, ...]) -> str | None:
                 filename = after[-1]
                 dot = filename.find(".")
                 base = filename[:dot] if dot > 0 else filename
-                if len(after) > 1:
-                    return str(Path(*after[:-1]) / base)
-                return base
+                return "/".join((*after[:-1], base))
     return None
 
 
@@ -58,10 +90,18 @@ def copy_lake_selective(
 
     Returns ``(files_copied, files_skipped)``.
     """
+    src_lake = _windows_extended_path(src_lake)
+    dst_lake = _windows_extended_path(dst_lake)
+
     if needed_stems is None:
         shutil.copytree(src_lake, dst_lake, symlinks=True, dirs_exist_ok=True)
         n = sum(1 for p in dst_lake.rglob("*") if p.is_file() or p.is_symlink())
         return n, 0
+
+    # Module identifiers are logical Lean paths, not host filesystem paths.
+    # A backslash-delimited set on Windows would make every top-level build
+    # directory look unused, discarding the cached dependency artifacts.
+    needed_stems = {stem.replace("\\", "/") for stem in needed_stems}
 
     # Pre-compute the set of directory prefixes that contain at least one
     # needed module so we can skip entire sub-trees early.
@@ -110,6 +150,8 @@ def copy_lake_selective(
 
 
 def _copy_file(src: Path, dst: Path) -> None:
+    src = _windows_extended_path(src)
+    dst = _windows_extended_path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
 
@@ -128,7 +170,7 @@ def _touch_oleans(bundle_project: Path) -> None:
     close to (or even after) the current time when assembly runs quickly.
     A relative offset from the actual source timestamps is robust.
     """
-    import os
+    bundle_project = _windows_extended_path(bundle_project)
     # Find the newest .lean source file anywhere in the project tree
     lean_max = 0.0
     for f in bundle_project.rglob("*.lean"):
@@ -154,13 +196,62 @@ _BUNDLE_CRITICAL_SETTINGS: dict[str, object] = {
     "lean4.automaticallyBuildDependencies": False,
     "lean4.alwaysAskBeforeInstallingLeanVersions": True,
     "lean4.showSetupWarnings": False,
-    "extensions.autoUpdate": False,
     "update.mode": "none",
     "extensions.autoCheckUpdates": False,
     "telemetry.telemetryLevel": "off",
     "security.workspace.trust.enabled": False,
     "workbench.startupEditor": "none",
+    # Recent VSCodium versions show the secondary sidebar by default for
+    # workspaces, even when no bundled extension contributes content to it.
+    "workbench.secondarySideBar.defaultVisibility": "hidden",
     "git.openRepositoryInParentFolders": "never",
+}
+
+# Extra critical settings applied only when the Waterproof extension is
+# bundled (``assemble_bundle(..., waterproof_included=True)``). This bundler
+# only ever wires up Waterproof's Lean-genre path (see
+# ``download.download_waterproof_extension``); "lean4" restricts Waterproof
+# to starting the Lean language server only, so it never probes for or
+# attempts to launch coq-lsp/Rocq, which the bundle deliberately does not
+# ship.
+_WATERPROOF_CRITICAL_SETTINGS: dict[str, object] = {
+    "waterproof.skipLaunchChecks": "lean4",
+    # Together with the extension's default custom-editor priority, ensure the
+    # first CLI-opened Lean file resolves through Waterproof on a fresh bundle.
+    "workbench.editorAssociations": {
+        "*.lean": "waterproofTue.waterproofEditor",
+    },
+    # Waterproof warns that trimming can alter proof documents unexpectedly.
+    "files.trimTrailingWhitespace": False,
+    # Keep newly-created documents on the only line-ending format supported
+    # by Waterproof's custom editor. Existing Lean sources are normalized
+    # during the copy below.
+    "files.eol": "\n",
+    "workbench.iconTheme": "waterproof-icons",
+}
+
+# Application-scoped settings cannot be written to
+# project/.vscode/settings.json. Keep extension updates disabled in the
+# portable VSCodium user's settings for every offline bundle.
+_BUNDLE_USER_SETTINGS: dict[str, object] = {
+    "extensions.autoUpdate": False,
+}
+
+# Theme selection belongs in the portable user's settings: application-scoped
+# OS detection is ignored at workspace scope, and a workspace colorTheme would
+# override the user's selection. Light remains the fallback when no OS scheme
+# is available; otherwise VSCodium selects the corresponding Waterproof theme.
+_WATERPROOF_USER_SETTINGS: dict[str, object] = {
+    "window.autoDetectColorScheme": True,
+    "workbench.colorTheme": "waterproof-light",
+    "workbench.preferredLightColorTheme": "waterproof-light",
+    "workbench.preferredDarkColorTheme": "waterproof-dark",
+}
+
+_WATERPROOF_WORKSPACE_THEME_SETTINGS = tuple(_WATERPROOF_USER_SETTINGS)
+
+_USER_ONLY_SETTING_KEYS = {
+    "extensions.autoUpdate",
 }
 
 
@@ -168,13 +259,22 @@ def copy_project_files(
     project_dir: Path,
     bundle_project: Path,
     extra_include: list[str] | None = None,
+    normalize_lean_line_endings: bool = False,
 ) -> None:
     """Copy the project's own source files into the bundle.
 
     Uses an allowlist: .lean files, lakefile configs, lean-toolchain,
     lake-manifest.json, and .vscode/. Use extra_include for additional
     glob patterns (e.g. ['*.json', 'data/'] for course data files).
+
+    When *normalize_lean_line_endings* is true, every copied project
+    ``.lean`` file is rewritten to LF. Waterproof's custom editor does not
+    support CRLF documents, and a Windows checkout with ``core.autocrlf``
+    may otherwise introduce CRLF even when the Git index stores LF.
     """
+    project_dir = _windows_extended_path(project_dir)
+    bundle_project = _windows_extended_path(bundle_project)
+
     for item in sorted(project_dir.iterdir()):
         if item.name in _SKIP_DIRS:
             continue
@@ -184,7 +284,11 @@ def copy_project_files(
                 _copy_file(item, dst)
         elif item.is_dir():
             if item.name in _ALLOWLIST_DIRS:
-                shutil.copytree(item, dst, dirs_exist_ok=True)
+                shutil.copytree(
+                    _windows_extended_path(item),
+                    _windows_extended_path(dst),
+                    dirs_exist_ok=True,
+                )
             else:
                 # Recursively copy only .lean files from subdirectories
                 for f in item.rglob("*.lean"):
@@ -204,9 +308,18 @@ def copy_project_files(
                     _copy_file(match, dst)
                 elif match.is_dir():
                     shutil.copytree(
-                        match, dst, dirs_exist_ok=True,
+                        _windows_extended_path(match),
+                        _windows_extended_path(dst),
+                        dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(*_SKIP_DIRS),
                     )
+
+    if normalize_lean_line_endings:
+        for lean_file in bundle_project.rglob("*.lean"):
+            contents = lean_file.read_bytes()
+            normalized = contents.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            if normalized != contents:
+                lean_file.write_bytes(normalized)
 
 
 def _parse_jsonc(text: str) -> object:
@@ -228,6 +341,7 @@ def _parse_jsonc(text: str) -> object:
 def _patch_workspace_settings(
     bundle_project: Path,
     critical_settings: dict[str, object],
+    remove_settings: tuple[str, ...] = (),
 ) -> None:
     """Ensure bundle-critical settings override project workspace settings.
 
@@ -237,8 +351,9 @@ def _patch_workspace_settings(
     override the bundle's user-level ``false``, re-enabling the exact
     behaviour the bundle is designed to prevent.
 
-    This function merges *critical_settings* into the project's workspace
-    settings so that bundle-critical values always win.
+    This function removes *remove_settings* and merges *critical_settings*
+    into the project's workspace settings so that bundle-critical values
+    always win.
     """
     vscode_dir = bundle_project / ".vscode"
     vscode_dir.mkdir(parents=True, exist_ok=True)
@@ -248,7 +363,16 @@ def _patch_workspace_settings(
     if settings_path.is_file():
         settings = _parse_jsonc(settings_path.read_text())
 
-    settings.update(critical_settings)
+    for key in _USER_ONLY_SETTING_KEYS:
+        settings.pop(key, None)
+    for key in remove_settings:
+        settings.pop(key, None)
+    for key, value in critical_settings.items():
+        existing = settings.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            settings[key] = {**existing, **value}
+        else:
+            settings[key] = value
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
 
@@ -282,6 +406,7 @@ def prune_ir_from_bundle(bundle_project: Path) -> tuple[int, int]:
 
     Returns ``(files_removed, bytes_freed)``.
     """
+    bundle_project = _windows_extended_path(bundle_project)
     files_removed = 0
     bytes_freed = 0
 
@@ -346,6 +471,8 @@ def copy_project_oleans(project_dir: Path, bundle_project: Path) -> int:
 
     Returns the number of files copied.
     """
+    project_dir = _windows_extended_path(project_dir)
+    bundle_project = _windows_extended_path(bundle_project)
     build_dir = project_dir / ".lake" / "build" / "lib" / "lean"
     if not build_dir.is_dir():
         return 0
@@ -375,11 +502,11 @@ def rewrite_manifest_to_path_deps(
     if not manifest_path.is_file():
         return
 
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     for pkg in manifest.get("packages", []):
         if pkg.get("type") == "git":
-            pkg_name = pkg["name"]
+            pkg_name = pkg["name"].strip("«»")
             # Convert all git deps to path deps, even if the package
             # directory doesn't exist (build-time-only deps like Cli).
             # This prevents lake from trying any git operations.
@@ -389,7 +516,10 @@ def rewrite_manifest_to_path_deps(
             for key in ["url", "rev", "inputRev", "subDir"]:
                 pkg.pop(key, None)
 
-    manifest_path.write_text(json.dumps(manifest, indent=1) + "\n")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=1) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
@@ -409,7 +539,7 @@ def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
 
     import re
     import tomllib
-    text = lakefile.read_text()
+    text = lakefile.read_text(encoding="utf-8")
     try:
         data = tomllib.loads(text)
     except Exception:
@@ -480,7 +610,7 @@ def _rewrite_lakefile_toml_deps(bundle_project: Path) -> None:
 
         text = text[:block_start] + "\n".join(new_lines) + text[block_end:]
 
-    lakefile.write_text(text)
+    lakefile.write_text(text, encoding="utf-8")
 
 
 def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
@@ -499,7 +629,7 @@ def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
         return
 
     import re
-    text = lakefile.read_text()
+    text = lakefile.read_text(encoding="utf-8")
     # Match: require <name> from git "url" [@ "rev"]
     # <name> can be: bare word, "quoted", or «guillemet»
     # Anchored to start-of-line (with optional leading whitespace) to avoid
@@ -517,7 +647,7 @@ def _rewrite_lakefile_lean_deps(bundle_project: Path) -> None:
 
     new_text = re.sub(pattern, replace_dep, text)
     if new_text != text:
-        lakefile.write_text(new_text)
+        lakefile.write_text(new_text, encoding="utf-8")
 
 
 def rewrite_deps_to_path(bundle_project: Path) -> None:
@@ -535,14 +665,43 @@ def setup_vscodium_portable(
     vscodium_dir: Path,
     extension_dirs: list[Path],
     settings_template: Path,
+    user_settings_overrides: dict[str, object] | None = None,
 ) -> None:
     """Set up VSCodium in portable mode with extensions pre-installed.
 
     Args:
         vscodium_dir: Path to extracted VSCodium.
-        extension_dirs: Paths to extracted extensions (lean4 + dependencies).
+        extension_dirs: Paths to the selected editor extension and its
+            dependencies. Waterproof and Lean 4 must not both be present.
         settings_template: Path to settings.json template.
+        user_settings_overrides: Values to merge into the portable user's
+            settings after copying the template.
     """
+    vscodium_dir = _windows_extended_path(vscodium_dir)
+    extension_dirs = [_windows_extended_path(path) for path in extension_dirs]
+    settings_template = _windows_extended_path(settings_template)
+
+    # Refuse a conflicting set even when this low-level assembly API is used
+    # directly instead of through bundle.py's mutually exclusive selector.
+    extension_ids: set[str] = set()
+    for extension_dir in extension_dirs:
+        extension_root = extension_dir / "extension"
+        if not extension_root.is_dir():
+            extension_root = extension_dir
+        package_path = extension_root / "package.json"
+        if package_path.is_file():
+            package = json.loads(package_path.read_text())
+            extension_ids.add(
+                f"{package.get('publisher', 'unknown')}."
+                f"{package.get('name', 'unknown')}"
+            )
+    conflicting_frontends = {"leanprover.lean4", "waterproof-tue.waterproof"}
+    if conflicting_frontends.issubset(extension_ids):
+        raise ValueError(
+            "Lean 4 and Waterproof extensions cannot be installed in the "
+            "same bundle"
+        )
+
     # Create portable data directory
     data_dir = vscodium_dir / "data"
     data_dir.mkdir(exist_ok=True)
@@ -560,7 +719,7 @@ def setup_vscodium_portable(
         # Install extension
         ext_dest = extensions_dir / extension_dir.name
         if ext_dest.exists():
-            shutil.rmtree(ext_dest)
+            _rmtree(ext_dest)
         shutil.copytree(extension_root, ext_dest)
 
         # Read extension metadata for the registry
@@ -573,6 +732,14 @@ def setup_vscodium_portable(
             ext_version = pkg.get("version", ext_version)
             ext_publisher = pkg.get("publisher", ext_publisher)
             ext_name = pkg.get("name", ext_name)
+            if f"{ext_publisher}.{ext_name}" == "waterproof-tue.waterproof":
+                for editor in pkg.get("contributes", {}).get("customEditors", []):
+                    if editor.get("viewType") == "waterproofTue.waterproofEditor":
+                        # The first CLI-opened file is resolved before editor
+                        # associations reliably take effect on a fresh profile.
+                        editor["priority"] = "default"
+                        ext_package.write_text(json.dumps(pkg, indent=2) + "\n")
+                        break
 
         # Write extensions.json registry entry.
         # The location field with $mid is VS Code's internal URI format;
@@ -598,21 +765,34 @@ def setup_vscodium_portable(
     # Create user settings
     user_dir = data_dir / "user-data" / "User"
     user_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(settings_template, user_dir / "settings.json")
+    user_settings_path = user_dir / "settings.json"
+    _copy_file(settings_template, user_settings_path)
+    if user_settings_overrides:
+        user_settings = _parse_jsonc(user_settings_path.read_text())
+        user_settings.update(user_settings_overrides)
+        user_settings_path.write_text(json.dumps(user_settings, indent=2) + "\n")
 
 
-def _detect_open_file(project_dir: Path) -> str | None:
-    """Find the first ``.lean`` file in *project_dir* to open on launch.
+def _reset_bundle_dir(bundle_dir: Path) -> None:
+    """Create an empty output directory for a deterministic assembly.
 
-    Returns a filename (not a full path) relative to *project_dir*, or
-    ``None`` if no suitable file is found.  ``lakefile.lean`` is excluded
-    since it's infrastructure, not student content.
+    A work directory can be reused after a successful or interrupted build.
+    Merging into its previous bundle output is unsafe: ``copytree`` cannot
+    overwrite existing symlinks, and files excluded by a newer selective copy
+    would otherwise remain in the bundle.
     """
-    candidates = sorted(
-        f.name for f in project_dir.iterdir()
-        if f.is_file() and f.suffix == ".lean" and f.name != "lakefile.lean"
-    )
-    return candidates[0] if candidates else None
+    fs_bundle_dir = _windows_extended_path(bundle_dir)
+    if fs_bundle_dir.is_symlink() or (
+        fs_bundle_dir.exists() and not fs_bundle_dir.is_dir()
+    ):
+        raise ValueError(
+            f"Bundle output path exists and is not a directory: {bundle_dir}"
+        )
+    if fs_bundle_dir.is_dir():
+        print(f"Removing previous bundle output at {bundle_dir}...")
+        _rmtree(fs_bundle_dir)
+    fs_bundle_dir.mkdir(parents=True)
+
 
 
 def assemble_bundle(
@@ -627,6 +807,8 @@ def assemble_bundle(
     extra_include: list[str] | None = None,
     needed_stems: set[str] | None = None,
     open_file: str | None = None,
+    waterproof_included: bool = False,
+    allow_unsolved: bool = False,
 ) -> None:
     """Assemble the complete bundle directory.
 
@@ -634,7 +816,9 @@ def assemble_bundle(
         project_dir: The built project directory (with .lake/packages/ and oleans).
         lean_dir: Extracted and trimmed lean toolchain directory.
         vscodium_dir: Extracted VSCodium directory.
-        extension_dirs: Extracted extension directories (lean4 + dependencies).
+        extension_dirs: Extracted directories for either Waterproof or Lean 4
+            and that extension's dependencies. The two frontends conflict and
+            must not both be present.
         git_shim_exe: Path to the built git.exe shim (Windows only, None
             on other platforms).
         templates_dir: Directory containing launcher and settings templates.
@@ -645,13 +829,29 @@ def assemble_bundle(
             only build artifacts for these modules are copied into the
             bundle's ``.lake/`` tree. Pass ``None`` to copy everything
             (fallback when the import closure cannot be computed).
-        open_file: Lean file to open on launch (relative to project dir).
-            If ``None``, auto-detected from the project root.
+        open_file: Lean file to open on the first launch, relative to the
+            project directory. If ``None``, only the workspace is opened.
+        waterproof_included: Whether the Waterproof extension is among
+            *extension_dirs*. When ``True``, forces
+            ``waterproof.skipLaunchChecks: "lean4"`` into the project's
+            workspace settings so Waterproof only starts the Lean
+            language server (this bundler never ships coq-lsp/Rocq), and
+            normalizes all copied project Lean sources to LF because the
+            Waterproof editor does not support CRLF documents.
+        allow_unsolved: Whether project sources are intentionally incomplete.
+            When ``True``, skip the final full-project rebuild because Lean's
+            expected ``unsolved goals`` diagnostics would otherwise abort
+            assembly. Lake itself is still checked before packaging.
     """
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    _reset_bundle_dir(bundle_dir)
 
     print("Copying lean toolchain...")
-    shutil.copytree(lean_dir, bundle_dir / "lean", symlinks=True, dirs_exist_ok=True)
+    shutil.copytree(
+        _windows_extended_path(lean_dir),
+        _windows_extended_path(bundle_dir / "lean"),
+        symlinks=True,
+        dirs_exist_ok=True,
+    )
 
     if git_shim_exe is not None:
         # Place the shim at <bundle>/git/cmd/git.exe so start_lean.cmd can
@@ -661,22 +861,46 @@ def assemble_bundle(
         print("Installing git shim...")
         git_cmd = bundle_dir / "git" / "cmd"
         git_cmd.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(git_shim_exe, git_cmd / "git.exe")
+        _copy_file(git_shim_exe, git_cmd / "git.exe")
 
     print("Setting up VSCodium...")
-    shutil.copytree(vscodium_dir, bundle_dir / "vscodium", symlinks=True, dirs_exist_ok=True)
+    shutil.copytree(
+        _windows_extended_path(vscodium_dir),
+        _windows_extended_path(bundle_dir / "vscodium"),
+        symlinks=True,
+        dirs_exist_ok=True,
+    )
+    user_settings = _BUNDLE_USER_SETTINGS
+    if waterproof_included:
+        user_settings = {**user_settings, **_WATERPROOF_USER_SETTINGS}
     setup_vscodium_portable(
         bundle_dir / "vscodium",
         extension_dirs,
         templates_dir / "settings.json",
+        user_settings_overrides=user_settings,
     )
 
     print("Copying project files...")
     bundle_project = bundle_dir / "project"
-    copy_project_files(project_dir, bundle_project, extra_include=extra_include)
+    copy_project_files(
+        project_dir,
+        bundle_project,
+        extra_include=extra_include,
+        normalize_lean_line_endings=waterproof_included,
+    )
 
     print("Patching workspace settings with bundle-critical overrides...")
-    _patch_workspace_settings(bundle_project, _BUNDLE_CRITICAL_SETTINGS)
+    critical_settings = _BUNDLE_CRITICAL_SETTINGS
+    if waterproof_included:
+        critical_settings = {**critical_settings, **_WATERPROOF_CRITICAL_SETTINGS}
+    remove_settings = (
+        _WATERPROOF_WORKSPACE_THEME_SETTINGS if waterproof_included else ()
+    )
+    _patch_workspace_settings(
+        bundle_project,
+        critical_settings,
+        remove_settings=remove_settings,
+    )
 
     print("Copying project oleans...")
     n_proj = copy_project_oleans(project_dir, bundle_project)
@@ -698,45 +922,49 @@ def assemble_bundle(
     print("Rewriting deps to path deps...")
     rewrite_deps_to_path(bundle_project)
 
-    # Rebuild the project's own modules inside the assembled bundle.
-    # This ensures the project's build traces are valid for the bundle's
-    # workspace configuration. Only the project's own modules need
-    # recompilation (~seconds); dependency oleans are already cached.
-    # Cross-compiled bundles (e.g. macOS built on Linux) can't run lake here;
-    # the test jobs handle that case by running lake setup-file on the target.
-    print("Rebuilding project modules with rewritten manifest...")
-    lake_bin = bundle_dir / "lean" / "bin" / "lake"
-    can_run = False
-    if lake_bin.is_file():
+    # Validate the copied artifacts inside the assembled native bundle and
+    # rebuild only if Lake finds a genuinely stale project target. With a
+    # complete import closure this should normally replay the cached build.
+    print("Checking project build with rewritten manifest...")
+    lake_name = "lake.exe" if platform.startswith("windows") else "lake"
+    lake_bin = bundle_dir / "lean" / "bin" / lake_name
+    if not lake_bin.is_file():
+        raise RuntimeError(f"Bundled native Lake executable is missing: {lake_bin}")
+
+    try:
+        version_result = subprocess.run(
+            [str(lake_bin), "--version"],
+            capture_output=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"Bundled native Lake executable cannot run: {lake_bin}") from e
+    if version_result.returncode != 0:
+        stderr = version_result.stderr.decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"Bundled native Lake executable failed: {stderr}")
+
+    rebuild_env = os.environ.copy()
+    rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
+    rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
+    if allow_unsolved:
+        print("  Skipping full project rebuild (unsolved exercises allowed)")
+    else:
         try:
             subprocess.run(
-                [str(lake_bin), "--version"],
-                capture_output=True, timeout=10,
-            )
-            can_run = True
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    if can_run:
-        rebuild_env = os.environ.copy()
-        rebuild_env["PATH"] = str(bundle_dir / "lean" / "bin") + os.pathsep + rebuild_env.get("PATH", "")
-        rebuild_env["ELAN_HOME"] = str(bundle_dir / "lean")
-        try:
-            result = subprocess.run(
                 [str(lake_bin), "build"],
                 cwd=str(bundle_project),
                 env=rebuild_env,
-                capture_output=True,
-                timeout=600,
+                check=True,
+                timeout=1800,
             )
-            if result.returncode == 0:
-                print("  Project rebuild successful")
-            else:
-                stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-                print(f"  Warning: project rebuild exited {result.returncode}: {stderr}")
-        except subprocess.TimeoutExpired:
-            print("  Warning: project rebuild timed out (600s), continuing without rebuild")
-    else:
-        print("  Skipped (cross-platform build, lake binary not runnable)")
+            print("  Project rebuild successful")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Native project rebuild exited {e.returncode}"
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "Native project rebuild timed out after 1800 seconds"
+            ) from e
 
     # Touch oleans AFTER the rebuild so they're strictly newer than any
     # source files or trace files the rebuild may have updated.
@@ -753,13 +981,11 @@ def assemble_bundle(
     # otherwise.  The lake `setup-file` wrapper is correspondingly
     # unnecessary and no longer installed.
 
-    # Determine which file to open on launch.
-    if open_file is None:
-        open_file = _detect_open_file(bundle_project)
+    # Open a file only when the bundle author explicitly requested one.
     if open_file:
         print(f"  File to open on launch: {open_file}")
     else:
-        print("  No .lean file found to open on launch")
+        print("  No file configured to open on launch")
 
     print("Installing launcher...")
     if platform.startswith("windows"):
